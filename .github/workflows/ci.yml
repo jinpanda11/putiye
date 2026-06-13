@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+jobs:
+  python-check:
+    name: Python syntax check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile server
+        run: python -m py_compile server.py mirror-server.py
+
+      - name: Verify deploy scripts
+        run: bash -n scripts/deploy/*.sh

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check GitHub updates for Putiyuan every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=putiyuan-update.service
+
+[Install]
+WantedBy=timers.target

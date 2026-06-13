@@ -1,0 +1,33 @@
+# Runtime data
+data.db
+data.db-*
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+logs/
+*.log
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.python-version
+.venv/
+venv/
+env/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

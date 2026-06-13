@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1A1410"/>
+      <stop offset="50%" stop-color="#2C2418"/>
+      <stop offset="100%" stop-color="#1A1410"/>
+    </linearGradient>
+    <linearGradient id="gold-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FDE68A"/>
+      <stop offset="50%" stop-color="#C9A05C"/>
+      <stop offset="100%" stop-color="#7C4F1A"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#C9A05C" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#C9A05C" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="cloud" x="0" y="0" width="200" height="200" patternUnits="userSpaceOnUse">
+      <path d="M 0 100 Q 50 80, 100 100 T 200 100" stroke="#C9A05C" stroke-width="0.6" fill="none" opacity="0.15"/>
+    </pattern>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="1200" height="630" fill="url(#bg-grad)"/>
+  <rect width="1200" height="630" fill="url(#cloud)" opacity="0.5"/>
+  
+  <!-- 中央光晕 -->
+  <ellipse cx="600" cy="340" rx="380" ry="280" fill="url(#glow)"/>
+  
+  <!-- 装饰山水线条 -->
+  <path d="M 0 530 L 200 470 L 350 510 L 500 460 L 700 500 L 900 450 L 1100 490 L 1200 470 L 1200 630 L 0 630 Z" 
+        fill="#2C2418" opacity="0.7"/>
+  <path d="M 0 570 L 250 530 L 450 560 L 700 520 L 950 555 L 1200 530 L 1200 630 L 0 630 Z" 
+        fill="#1A1410" opacity="0.85"/>
+  
+  <!-- 菩提叶 logo -->
+  <g transform="translate(540, 130)">
+    <circle cx="60" cy="60" r="58" fill="#1A1410" stroke="#C9A05C" stroke-width="2"/>
+    <path d="M60 12 C 42 12, 24 24, 20 42 C 16 60, 28 84, 46 96 C 54 102, 58 108, 60 116 L 60 118 L 60 116 C 62 108, 66 102, 74 96 C 92 84, 104 60, 100 42 C 96 24, 78 12, 60 12 Z"
+          fill="url(#gold-grad)" stroke="#C9A05C" stroke-width="1.4"/>
+    <path d="M60 14 V 116" stroke="#1A1410" stroke-width="1.6" fill="none"/>
+    <path d="M60 30 C 50 33, 38 40, 32 52" stroke="#1A1410" stroke-width="1" fill="none"/>
+    <path d="M60 30 C 70 33, 82 40, 88 52" stroke="#1A1410" stroke-width="1" fill="none"/>
+    <path d="M60 56 C 46 60, 36 70, 32 80" stroke="#1A1410" stroke-width="1" fill="none"/>
+    <path d="M60 56 C 74 60, 84 70, 88 80" stroke="#1A1410" stroke-width="1" fill="none"/>
+  </g>
+
+  <!-- 主标题 -->
+  <text x="600" y="320" font-family="STKaiti, KaiTi, serif" font-size="92" fill="#C9A05C" 
+        text-anchor="middle" font-weight="bold" letter-spacing="16">
+    菩 提 苑
+  </text>
+
+  <!-- 副标题 -->
+  <text x="600" y="380" font-family="STKaiti, KaiTi, serif" font-size="34" fill="#F5F0E8"
+        text-anchor="middle" letter-spacing="8" opacity="0.95">
+    为家人祈福 · 求灵签 · 看八字
+  </text>
+
+  <!-- 一念慈悲 slogan -->
+  <text x="600" y="450" font-family="STKaiti, KaiTi, serif" font-size="22" fill="#C9A05C"
+        text-anchor="middle" letter-spacing="6" opacity="0.85">
+    一念慈悲 · 一灯长明
+  </text>
+
+  <!-- 底部小标 -->
+  <text x="600" y="600" font-family="PingFang SC, sans-serif" font-size="18" fill="#A8894E"
+        text-anchor="middle" letter-spacing="4" opacity="0.8">
+    传统签谱 · 古籍为据 · 师父开示
+  </text>
+  
+  <!-- 装饰边框 -->
+  <rect x="40" y="40" width="1120" height="550" fill="none" 
+        stroke="#C9A05C" stroke-width="1.5" opacity="0.4" rx="8"/>
+</svg>

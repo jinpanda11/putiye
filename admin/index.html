@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5,viewport-fit=cover"/>
+<meta name="theme-color" content="#1A1410"/><title>管理员后台 · 菩提苑</title>
+<link rel="icon" href="/favicon.svg"/>
+<link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+<body>
+<main class="main">
+  <div class="page-hero">
+    <div class="icon">令</div>
+    <h1>管理员后台</h1>
+    <p>用户 · 祈福 · 订单 · 功德概览</p>
+  </div>
+
+  <div id="admin-root">
+    <div class="loading"><div class="spinner"></div><span>正在校验管理员权限...</span></div>
+  </div>
+</main>
+<script src="/static/js/app.js"></script>
+<script>
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function timeText(value) {
+  return value ? esc(String(value).replace('T', ' ').slice(0, 19)) : '-';
+}
+
+function renderTable(headers, rows, emptyText) {
+  if (!rows || rows.length === 0) {
+    return `<div style="color:var(--ink-muted);padding:1rem;text-align:center;">${emptyText}</div>`;
+  }
+  return `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAiConfig(ai) {
+  const enabled = ai?.enabled ? 'checked' : '';
+  return `
+    <div class="card" style="margin-top:1rem;">
+      <div class="section-title" style="margin-bottom:1rem;"><span class="deco"></span>大模型配置</div>
+      <div style="display:grid;gap:0.8rem;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+        <label class="form-group" style="margin:0;">
+          <span class="form-label">启用大模型</span>
+          <select class="form-input" id="ai-enabled">
+            <option value="1" ${ai?.enabled ? 'selected' : ''}>启用</option>
+            <option value="0" ${!ai?.enabled ? 'selected' : ''}>关闭（使用本地兜底）</option>
+          </select>
+        </label>
+        <label class="form-group" style="margin:0;">
+          <span class="form-label">供应商名称</span>
+          <input class="form-input" id="ai-provider" value="${esc(ai?.provider_name || 'OpenAI Compatible')}" placeholder="OpenAI / DeepSeek / 通义..." />
+        </label>
+        <label class="form-group" style="margin:0;">
+          <span class="form-label">API Base URL</span>
+          <input class="form-input" id="ai-base-url" value="${esc(ai?.base_url || 'https://api.openai.com/v1')}" placeholder="https://api.openai.com/v1" />
+        </label>
+        <label class="form-group" style="margin:0;">
+          <span class="form-label">API Key</span>
+          <input class="form-input" id="ai-api-key" type="password" placeholder="${ai?.api_key_set ? esc(ai.api_key_masked || '已配置，不填则保留') : '请输入 API Key'}" />
+        </label>
+        <label class="form-group" style="margin:0;">
+          <span class="form-label">文本模型</span>
+          <input class="form-input" id="ai-text-model" value="${esc(ai?.text_model || 'gpt-4o-mini')}" placeholder="gpt-4o-mini" />
+        </label>
+        <label class="form-group" style="margin:0;">
+          <span class="form-label">视觉模型（手相）</span>
+          <input class="form-input" id="ai-vision-model" value="${esc(ai?.vision_model || ai?.text_model || 'gpt-4o-mini')}" placeholder="gpt-4o-mini" />
+        </label>
+        <label class="form-group" style="margin:0;">
+          <span class="form-label">温度</span>
+          <input class="form-input" id="ai-temperature" type="number" step="0.1" min="0" max="2" value="${esc(ai?.temperature ?? 0.7)}" />
+        </label>
+        <label class="form-group" style="margin:0;">
+          <span class="form-label">超时秒数</span>
+          <input class="form-input" id="ai-timeout" type="number" min="5" max="180" value="${esc(ai?.timeout_seconds || 45)}" />
+        </label>
+      </div>
+      <p style="margin:0.8rem 0 0;color:var(--ink-muted);font-size:0.85rem;line-height:1.8;">
+        用于八字开示、灵签解读、六爻解卦、周公解梦、宝宝起名和手相识别。API Key 只保存在后端数据库，前端不会读取明文。
+      </p>
+      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+        <button class="btn btn-gold" onclick="saveAiConfig()">保存配置</button>
+        <button class="btn btn-outline" onclick="testAiConfig()">测试连接</button>
+        <span id="ai-status" style="align-self:center;color:var(--ink-muted);font-size:0.9rem;">${ai?.api_key_set ? '已保存 Key' : '未配置 Key'}</span>
+      </div>
+    </div>
+  `;
+}
+
+async function saveAiConfig() {
+  const status = document.getElementById('ai-status');
+  status.textContent = '正在保存...';
+  const payload = {
+    enabled: document.getElementById('ai-enabled').value === '1',
+    provider_name: document.getElementById('ai-provider').value.trim(),
+    base_url: document.getElementById('ai-base-url').value.trim(),
+    api_key: document.getElementById('ai-api-key').value.trim(),
+    text_model: document.getElementById('ai-text-model').value.trim(),
+    vision_model: document.getElementById('ai-vision-model').value.trim(),
+    temperature: Number(document.getElementById('ai-temperature').value || 0.7),
+    timeout_seconds: Number(document.getElementById('ai-timeout').value || 45),
+  };
+  const res = await api_post('/admin/ai-config/save', payload);
+  if (res.code === 0) {
+    status.textContent = '已保存';
+    showToast('大模型配置已保存');
+    document.getElementById('ai-api-key').value = '';
+  } else {
+    status.textContent = res.message || '保存失败';
+    showToast(res.message || '保存失败');
+  }
+}
+
+async function testAiConfig() {
+  const status = document.getElementById('ai-status');
+  status.textContent = '正在测试连接...';
+  const res = await api_post('/admin/ai-config/test', {});
+  if (res.code === 0) {
+    status.textContent = `${res.data.provider || 'AI'} / ${res.data.model || ''}: ${res.data.reply || '连接成功'}`;
+    showToast('大模型连接成功');
+  } else {
+    status.textContent = res.message || '连接失败';
+    showToast(res.message || '连接失败');
+  }
+}
+
+function renderPaymentConfig(payment) {
+  const gateways = payment?.gateways?.length ? payment.gateways : [
+    { id: 'epay_1', name: '易支付网关一', enabled: 0, api_url: '', merchant_id: '', pay_type: 'alipay', sort_order: 1 },
+    { id: 'epay_2', name: '易支付网关二', enabled: 0, api_url: '', merchant_id: '', pay_type: 'alipay', sort_order: 2 },
+  ];
+  const products = payment?.products || [];
+  const durations = payment?.blessing_durations || [];
+  return `
+    <div class="card" style="margin-top:1rem;">
+      <div class="section-title" style="margin-bottom:1rem;"><span class="deco"></span>支付配置</div>
+      <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">
+        ${gateways.slice(0, 2).map((g, idx) => `
+          <div data-payment-gateway data-id="${esc(g.id || ('epay_' + (idx + 1)))}" style="border:1px solid rgba(201,169,110,0.16);border-radius:12px;padding:1rem;background:rgba(26,20,16,0.28);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.8rem;">
+              <strong style="color:var(--gold);font-weight:500;">${esc(g.name || ('易支付网关' + (idx + 1)))}</strong>
+              <select class="form-input pay-enabled" style="width:6.5rem;">
+                <option value="1" ${g.enabled ? 'selected' : ''}>启用</option>
+                <option value="0" ${!g.enabled ? 'selected' : ''}>关闭</option>
+              </select>
+            </div>
+            <div style="display:grid;gap:0.75rem;">
+              <label class="form-group" style="margin:0;">
+                <span class="form-label">网关名称</span>
+                <input class="form-input pay-name" value="${esc(g.name || '')}" placeholder="易支付网关一" />
+              </label>
+              <label class="form-group" style="margin:0;">
+                <span class="form-label">网关地址</span>
+                <input class="form-input pay-api-url" value="${esc(g.api_url || '')}" placeholder="https://pay.example.com" />
+              </label>
+              <div style="display:grid;gap:0.75rem;grid-template-columns:1fr 1fr;">
+                <label class="form-group" style="margin:0;">
+                  <span class="form-label">商户 PID</span>
+                  <input class="form-input pay-merchant-id" value="${esc(g.merchant_id || '')}" placeholder="1001" />
+                </label>
+                <label class="form-group" style="margin:0;">
+                  <span class="form-label">支付类型</span>
+                  <select class="form-input pay-type">
+                    ${['alipay','wxpay','qqpay','bank'].map(type => `<option value="${type}" ${(g.pay_type || 'alipay') === type ? 'selected' : ''}>${type}</option>`).join('')}
+                  </select>
+                </label>
+              </div>
+              <label class="form-group" style="margin:0;">
+                <span class="form-label">商户 Key</span>
+                <input class="form-input pay-key" type="password" placeholder="${g.merchant_key_set ? esc(g.merchant_key_masked || '已配置，不填则保留') : '请输入易支付商户 Key'}" />
+              </label>
+              <label class="form-group" style="margin:0;">
+                <span class="form-label">排序</span>
+                <input class="form-input pay-sort" type="number" value="${esc(g.sort_order || idx + 1)}" />
+              </label>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+
+      <div style="margin-top:1.25rem;">
+        <div class="section-title" style="font-size:1rem;margin-bottom:0.75rem;"><span class="deco"></span>功能价格</div>
+        ${renderTable(['项目','说明','价格','启用'], products.map((p, idx) => `
+          <tr data-product-row data-id="${esc(p.product_id)}" data-sort="${esc(p.sort_order || idx + 1)}">
+            <td><input class="form-input product-name" value="${esc(p.name || '')}" /></td>
+            <td><input class="form-input product-desc" value="${esc(p.description || '')}" /></td>
+            <td><input class="form-input product-price" type="number" min="0" step="0.01" value="${esc(p.price ?? 0)}" /></td>
+            <td>
+              <select class="form-input product-enabled" style="min-width:5.5rem;">
+                <option value="1" ${p.enabled ? 'selected' : ''}>启用</option>
+                <option value="0" ${!p.enabled ? 'selected' : ''}>关闭</option>
+              </select>
+            </td>
+          </tr>
+        `), '暂无价格项目')}
+      </div>
+
+      <div style="margin-top:1.25rem;">
+        <div class="section-title" style="font-size:1rem;margin-bottom:0.75rem;"><span class="deco"></span>祈福灯期价格</div>
+        ${renderTable(['灯期','天数','价格','启用'], durations.map((d, idx) => `
+          <tr data-duration-row data-id="${esc(d.duration_id)}" data-sort="${esc(d.sort_order || idx + 1)}">
+            <td><input class="form-input duration-label" value="${esc(d.label || '')}" /></td>
+            <td><input class="form-input duration-days" type="number" min="1" value="${esc(d.days || 30)}" /></td>
+            <td><input class="form-input duration-price" type="number" min="0" step="0.01" value="${esc(d.price ?? 0)}" /></td>
+            <td>
+              <select class="form-input duration-enabled" style="min-width:5.5rem;">
+                <option value="1" ${d.enabled ? 'selected' : ''}>启用</option>
+                <option value="0" ${!d.enabled ? 'selected' : ''}>关闭</option>
+              </select>
+            </td>
+          </tr>
+        `), '暂无灯期价格')}
+      </div>
+
+      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+        <button class="btn btn-gold" onclick="savePaymentConfig()">保存支付配置</button>
+        <span id="payment-status" style="align-self:center;color:var(--ink-muted);font-size:0.9rem;">${gateways.some(g => g.enabled) ? '已有启用网关' : '尚未启用网关'}</span>
+      </div>
+    </div>
+  `;
+}
+
+async function savePaymentConfig() {
+  const status = document.getElementById('payment-status');
+  status.textContent = '正在保存...';
+  const gateways = [...document.querySelectorAll('[data-payment-gateway]')].map((el) => ({
+    id: el.dataset.id,
+    name: el.querySelector('.pay-name').value.trim(),
+    enabled: el.querySelector('.pay-enabled').value === '1',
+    api_url: el.querySelector('.pay-api-url').value.trim(),
+    merchant_id: el.querySelector('.pay-merchant-id').value.trim(),
+    merchant_key: el.querySelector('.pay-key').value.trim(),
+    pay_type: el.querySelector('.pay-type').value,
+    sort_order: Number(el.querySelector('.pay-sort').value || 1),
+  }));
+  const products = [...document.querySelectorAll('[data-product-row]')].map((el) => ({
+    product_id: el.dataset.id,
+    name: el.querySelector('.product-name').value.trim(),
+    description: el.querySelector('.product-desc').value.trim(),
+    price: Number(el.querySelector('.product-price').value || 0),
+    enabled: el.querySelector('.product-enabled').value === '1',
+    sort_order: Number(el.dataset.sort || 1),
+  }));
+  const blessing_durations = [...document.querySelectorAll('[data-duration-row]')].map((el) => ({
+    duration_id: el.dataset.id,
+    label: el.querySelector('.duration-label').value.trim(),
+    days: Number(el.querySelector('.duration-days').value || 30),
+    price: Number(el.querySelector('.duration-price').value || 0),
+    enabled: el.querySelector('.duration-enabled').value === '1',
+    sort_order: Number(el.dataset.sort || 1),
+  }));
+  const res = await api_post('/admin/payment-config/save', { gateways, products, blessing_durations });
+  if (res.code === 0) {
+    status.textContent = '已保存';
+    showToast('支付配置已保存');
+    document.querySelectorAll('.pay-key').forEach(input => input.value = '');
+  } else {
+    status.textContent = res.message || '保存失败';
+    showToast(res.message || '保存失败');
+  }
+}
+
+async function loadAdmin() {
+  const root = document.getElementById('admin-root');
+  const user = await getUser();
+  if (!user?.is_admin) {
+    root.innerHTML = `
+      <div class="card" style="max-width:560px;margin:0 auto;text-align:center;">
+        <h2 style="color:var(--gold);font-size:1.5rem;margin-bottom:0.75rem;">需要管理员权限</h2>
+        <p style="color:var(--ink-muted);font-size:0.9rem;line-height:1.9;margin-bottom:1rem;">请登录管理员账号。若这是第一次部署，请先注册一个账号，系统会自动把第一个正式账号设为管理员。</p>
+        <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
+          <button class="btn btn-gold" onclick="showLoginModal()">登录</button>
+          <button class="btn btn-outline" onclick="showRegisterModal()">注册首个管理员</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const [statsRes, usersRes, blessingsRes, ordersRes, aiConfigRes, paymentConfigRes] = await Promise.all([
+    api_post('/admin/stats', {}),
+    api_post('/admin/users', { limit: 30 }),
+    api_post('/admin/blessings', { limit: 30 }),
+    api_post('/admin/orders', { limit: 30 }),
+    api_post('/admin/ai-config', {}),
+    api_post('/admin/payment-config', {}),
+  ]);
+
+  if (statsRes.code !== 0) {
+    root.innerHTML = `<div class="card" style="text-align:center;color:var(--ink-muted);">${esc(statsRes.message || '后台加载失败')}</div>`;
+    return;
+  }
+
+  const stats = statsRes.data.stats;
+  const users = usersRes.data?.entries || [];
+  const blessings = blessingsRes.data?.entries || [];
+  const orders = ordersRes.data?.entries || [];
+  const aiConfig = aiConfigRes.data || {};
+  const paymentConfig = paymentConfigRes.data || {};
+
+  root.innerHTML = `
+    <div class="admin-stat-grid">
+      ${[
+        ['用户总数', stats.users],
+        ['正式账号', stats.registered_users],
+        ['管理员', stats.admins],
+        ['祈福记录', stats.blessings],
+        ['订单总数', stats.orders],
+        ['已支付', stats.paid_orders],
+        ['总功德', stats.merit_total],
+      ].map(([label, value]) => `
+        <div class="card admin-stat">
+          <div class="admin-stat-value">${esc(value)}</div>
+          <div class="admin-stat-label">${esc(label)}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    ${renderAiConfig(aiConfig)}
+
+    ${renderPaymentConfig(paymentConfig)}
+
+    <div class="card" style="margin-top:1rem;">
+      <div class="section-title" style="margin-bottom:1rem;"><span class="deco"></span>用户管理</div>
+      ${renderTable(['昵称','账号','吉祥号','手机','身份','功德','创建时间'], users.map(u => `
+        <tr>
+          <td>${esc(u.nickname || '-')}</td>
+          <td>${esc(u.username || '-')}</td>
+          <td>${esc(u.lucky_code || '-')}</td>
+          <td>${esc(u.phone || '-')}</td>
+          <td>${u.is_admin ? '<span class="tag tag-red">管理员</span>' : (u.username ? '<span class="tag tag-gold">正式</span>' : '<span class="tag">游客</span>')}</td>
+          <td>${esc(u.total_merit_added || 0)}</td>
+          <td>${timeText(u.created_at)}</td>
+        </tr>
+      `), '暂无用户')}
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <div class="section-title" style="margin-bottom:1rem;"><span class="deco"></span>祈福记录</div>
+      ${renderTable(['用户','类型','内容','公开','时间'], blessings.map(b => `
+        <tr>
+          <td>${esc(b.nickname || b.lucky_code || '-')}</td>
+          <td>${esc(b.blessing_type || '-')}</td>
+          <td>${esc(b.content || '-')}</td>
+          <td>${b.is_public ? '是' : '否'}</td>
+          <td>${timeText(b.created_at)}</td>
+        </tr>
+      `), '暂无祈福记录')}
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <div class="section-title" style="margin-bottom:1rem;"><span class="deco"></span>订单记录</div>
+      ${renderTable(['用户','产品','金额','状态','渠道','网关/交易号','时间'], orders.map(o => `
+        <tr>
+          <td>${esc(o.nickname || o.lucky_code || '-')}</td>
+          <td>${esc(o.product_name || o.product_id || '-')}</td>
+          <td>${esc(o.amount)} ${esc(o.currency || 'CNY')}</td>
+          <td>${esc(o.status || '-')}</td>
+          <td>${esc(o.provider || '-')}</td>
+          <td>${esc(o.gateway_id || '-')}${o.trade_no ? '<br/><span style="color:var(--ink-muted);">' + esc(o.trade_no) + '</span>' : ''}</td>
+          <td>${timeText(o.created_at)}</td>
+        </tr>
+      `), '暂无订单')}
+    </div>
+  `;
+}
+
+loadAdmin();
+window.addEventListener('putiyuan:user-updated', loadAdmin);
+</script>
+</body>
+</html>

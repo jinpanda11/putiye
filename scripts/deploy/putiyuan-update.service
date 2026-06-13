@@ -1,0 +1,9 @@
+[Unit]
+Description=Update Putiyuan from GitHub
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/putiyuan.env
+ExecStart=/opt/putiyuan/current/scripts/deploy/putiyuan-update.sh
