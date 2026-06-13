@@ -262,7 +262,7 @@ def seed_payment_config(conn):
 # ─── Auth Helpers ────────────────────────────────────────────────────────────
 
 def make_token(user_id):
-    exp = (datetime.datetime.utcnow() + datetime.timedelta(days=TOKEN_EXPIRE_DAYS)).isoformat() + 'Z'
+    exp = (datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=TOKEN_EXPIRE_DAYS)).isoformat() + 'Z'
     payload = json.dumps({"uid": user_id, "exp": exp}, separators=(',',':'))
     sig = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
     token = base64.urlsafe_b64encode((payload + '.' + sig).encode()).decode()
@@ -277,7 +277,7 @@ def verify_token(token):
             return None
         data = json.loads(payload)
         exp = datetime.datetime.fromisoformat(data['exp'].rstrip('Z'))
-        if exp < datetime.datetime.utcnow():
+        if exp < datetime.datetime.now(datetime.UTC):
             return None
         return data['uid']
     except Exception:
@@ -1612,7 +1612,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             # Refresh token
             token = make_token(user['id'])
             conn.execute("UPDATE users SET token=?, token_created_at=? WHERE id=?",
-                        (token, datetime.datetime.utcnow().isoformat(), user['id']))
+                        (token, datetime.datetime.now(datetime.UTC).isoformat(), user['id']))
             conn.commit()
             conn.close()
             json_resp(self, {
@@ -1627,7 +1627,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         token = make_token(uid)
         conn.execute(
             "INSERT INTO users (id, lucky_code, device_id, nickname, token, token_created_at) VALUES (?,?,?,?,?,?)",
-            (uid, lucky_code, device_id, lucky_code, token, datetime.datetime.utcnow().isoformat())
+            (uid, lucky_code, device_id, lucky_code, token, datetime.datetime.now(datetime.UTC).isoformat())
         )
         # Create referral code for user
         ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
