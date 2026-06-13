@@ -382,13 +382,6 @@ def check_verify_code(email, code):
         return True
     return False
 
-def cleanup_expired_codes():
-    expiry = (datetime.datetime.utcnow() - datetime.timedelta(minutes=VERIFY_CODE_EXPIRE_MINUTES)).isoformat()
-    conn = get_db()
-    conn.execute("DELETE FROM email_verify_codes WHERE created_at<?", (expiry,))
-    conn.commit()
-    conn.close()
-
 # ─── Response Helpers ────────────────────────────────────────────────────────
 
 def json_resp(h, data, code=0, message="ok", status=200):
@@ -980,76 +973,6 @@ HEXAGRAMS = [
     {"num":64,"name":"火水未济","judgment":"亨。小狐汔济。","yao_desc":"濡其尾、曳其轮、未济征凶、贞吉悔亡、贞吉无悔、有孚于饮酒"},
 ]
 
-def cast_divination(question):
-    """Cast I Ching divination."""
-    random.seed(question + str(time.time()))
-    trigrams_upper = random.choice(HEXAGRAMS)
-    trigrams_lower = random.choice(HEXAGRAMS)
-    # Ensure they're different hexagrams
-    while trigrams_lower['num'] == trigrams_upper['num']:
-        trigrams_lower = random.choice(HEXAGRAMS)
-
-    changed = random.choice(HEXAGRAMS)
-
-    personality = [
-        "你为人坦荡正直，有领导风范，做事果断，不喜欢拖泥带水。你不惧挑战，越有压力越能激发潜能。",
-        "你性格中带有坚韧的一面，面对困难不轻言放弃。你善于规划，喜欢将事情掌握在自己手中。",
-        "你内心有强烈的正义感，看不惯不平之事。做事讲究原则，但也因此容易与人产生摩擦。",
-    ]
-    career = [
-        "事业方面适合发挥你的领导才能，管理岗、创业或独立负责项目都能有所作为。",
-        "当前正处于上升期，虽然忙碌但成果显著。建议稳扎稳打，不要追求短期利益而忽视长远规划。",
-        "今年贵人运在北方，多参与行业交流、专业论坛，有机会遇到重要的人脉资源。",
-    ]
-    wealth = [
-        "财运平稳上升，正财为主，偏财为辅。投资理财适合稳健型产品，避免高风险操作。",
-        "你的财库在秋冬季节最为旺盛，适合做年终盘点和来年规划。",
-        "不宜与人合伙经营，容易因利益分配产生矛盾。独立运作反而更顺利。",
-    ]
-    relationship = [
-        "感情方面你比较务实，不喜欢花言巧语。真心付出的人最终会被你打动。",
-        "今年桃花运在中晚年运程中较好，单身者有机会通过工作场合认识良缘。",
-        "已婚者注意沟通方式，多倾听对方需求，避免因工作忙碌而疏远感情。",
-    ]
-    health = [
-        "身体健康总体良好，但要注意肝胆系统和消化系统的保养。",
-        "压力大时容易出现失眠、头痛等问题，建议适当运动释放压力。",
-        "适合太极、瑜伽、散步等舒缓运动，不宜剧烈运动。",
-    ]
-
-    # Get changing line interpretation
-    yao_list = changed['yao_desc'].split('、')
-    changing_yao = random.choice(yao_list)
-
-    return {
-        "hexagram": {
-            "name": trigrams_upper['name'],
-            "number": trigrams_upper['num'],
-            "judgment": trigrams_upper['judgment'],
-        },
-        "changing_hexagram": {
-            "name": trigrams_lower['name'],
-            "number": trigrams_lower['num'],
-            "judgment": trigrams_lower['judgment'],
-        },
-        "changing_yao": changing_yao,
-        "interpretation": {
-            "overall": f"此卦{trigrams_upper['name']}变{trigrams_lower['name']}，主{trigrams_upper['judgment']}。{trigrams_lower['judgment']}。",
-            "personality": personality,
-            "career": career,
-            "wealth": wealth,
-            "relationship": relationship,
-            "health": health,
-        },
-        "advice": random.choice([
-            "当下宜静不宜动，先观察再做决定。",
-            "积极行动，把握良机，但不要操之过急。",
-            "顺势而为，不要逆势操作，等待最佳时机。",
-            "内省反思，调整方向后再出发。",
-            "广结善缘，人脉就是你的财富。",
-            "专注当下，做好每一件小事。",
-        ])
-    }
 
 # ─── Lottery Engine ──────────────────────────────────────────────────────────
 
@@ -1381,6 +1304,36 @@ def source_divination_result(question):
     for i in range(1, 7):
         yin = (i + line) % 2 == 0
         lines.append({"position": i, "type": "yin" if yin else "yang", "changing": i == line, "display": "━━ ━━" if yin else "━━━━━"})
+
+    personality = [
+        "你为人坦荡正直，有领导风范，做事果断，不喜欢拖泥带水。你不惧挑战，越有压力越能激发潜能。",
+        "你性格中带有坚韧的一面，面对困难不轻言放弃。你善于规划，喜欢将事情掌握在自己手中。",
+        "你内心有强烈的正义感，看不惯不平之事。做事讲究原则，但也因此容易与人产生摩擦。",
+    ]
+    career = [
+        "事业方面适合发挥你的领导才能，管理岗、创业或独立负责项目都能有所作为。",
+        "当前正处于上升期，虽然忙碌但成果显著。建议稳扎稳打，不要追求短期利益而忽视长远规划。",
+        "今年贵人运在北方，多参与行业交流、专业论坛，有机会遇到重要的人脉资源。",
+    ]
+    wealth = [
+        "财运平稳上升，正财为主，偏财为辅。投资理财适合稳健型产品，避免高风险操作。",
+        "你的财库在秋冬季节最为旺盛，适合做年终盘点和来年规划。",
+        "不宜与人合伙经营，容易因利益分配产生矛盾。独立运作反而更顺利。",
+    ]
+    relationship = [
+        "感情方面你比较务实，不喜欢花言巧语。真心付出的人最终会被你打动。",
+        "今年桃花运在中晚年运程中较好，单身者有机会通过工作场合认识良缘。",
+        "已婚者注意沟通方式，多倾听对方需求，避免因工作忙碌而疏远感情。",
+    ]
+    health = [
+        "身体健康总体良好，但要注意肝胆系统和消化系统的保养。",
+        "压力大时容易出现失眠、头痛等问题，建议适当运动释放压力。",
+        "适合太极、瑜伽、散步等舒缓运动，不宜剧烈运动。",
+    ]
+
+    yao_list = changed['yao_desc'].split('、')
+    changing_yao = random.choice(yao_list)
+
     return {
         "hexagram_id": "div_" + gen_id(),
         "session_id": "div_" + gen_id(),
@@ -1391,6 +1344,25 @@ def source_divination_result(question):
         "changing_line": line,
         "changing_line_text": f"第 {line} 爻发动，宜审时度势。",
         "judgment": original["judgment"],
+        "hexagram": {"name": original["name"], "number": original["num"], "judgment": original["judgment"]},
+        "changing_hexagram": {"name": changed["name"], "number": changed["num"], "judgment": changed["judgment"]},
+        "changing_yao": changing_yao,
+        "interpretation": {
+            "overall": f"此卦{original['name']}变{changed['name']}，主{original['judgment']}。{changed['judgment']}。",
+            "personality": personality,
+            "career": career,
+            "wealth": wealth,
+            "relationship": relationship,
+            "health": health,
+        },
+        "advice": random.choice([
+            "当下宜静不宜动，先观察再做决定。",
+            "积极行动，把握良机，但不要操之过急。",
+            "顺势而为，不要逆势操作，等待最佳时机。",
+            "内省反思，调整方向后再出发。",
+            "广结善缘，人脉就是你的财富。",
+            "专注当下，做好每一件小事。",
+        ]),
     }
 
 # ─── API Router ────────────────────────────────────────────────────────────────
