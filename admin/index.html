@@ -333,12 +333,12 @@ async function loadAdmin() {
 
     <div class="card" style="margin-top:1rem;">
       <div class="section-title" style="margin-bottom:1rem;"><span class="deco"></span>用户管理</div>
-      ${renderTable(['昵称','账号','吉祥号','手机','身份','功德','创建时间'], users.map(u => `
+      ${renderTable(['昵称','账号','吉祥号','邮箱','身份','功德','创建时间'], users.map(u => `
         <tr>
           <td>${esc(u.nickname || '-')}</td>
           <td>${esc(u.username || '-')}</td>
           <td>${esc(u.lucky_code || '-')}</td>
-          <td>${esc(u.phone || '-')}</td>
+          <td>${esc(u.email || '-')}</td>
           <td>${u.is_admin ? '<span class="tag tag-red">管理员</span>' : (u.username ? '<span class="tag tag-gold">正式</span>' : '<span class="tag">游客</span>')}</td>
           <td>${esc(u.total_merit_added || 0)}</td>
           <td>${timeText(u.created_at)}</td>

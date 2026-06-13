@@ -202,7 +202,7 @@ function showRestoreModal() {
   openModal(`
     <h2>找回缘分记录</h2>
     <p style="color:var(--ink-muted);font-size:0.85rem;text-align:center;margin-bottom:1.25rem;">
-      通过吉祥号或手机号找回你的历史记录
+      通过吉祥号或绑定邮箱找回你的历史记录
     </p>
     <div class="form-group">
       <label class="form-label">吉祥号</label>
@@ -210,8 +210,15 @@ function showRestoreModal() {
     </div>
     <p style="text-align:center;color:var(--ink-muted);font-size:0.8rem;margin:0.5rem 0;">— 或 —</p>
     <div class="form-group">
-      <label class="form-label">手机号</label>
-      <input class="form-input" id="restore-phone" type="tel" placeholder="输入绑定手机号" />
+      <label class="form-label">邮箱</label>
+      <input class="form-input" id="restore-email" type="email" placeholder="输入绑定邮箱" />
+    </div>
+    <div class="form-group" id="restore-code-group" style="display:none;">
+      <label class="form-label">验证码</label>
+      <div style="display:flex;gap:0.5rem;">
+        <input class="form-input" id="restore-code" type="text" placeholder="6 位验证码" style="flex:1;" />
+        <button class="btn btn-ghost" id="restore-send-code-btn" onclick="sendRestoreCode()">发送验证码</button>
+      </div>
     </div>
     <button class="btn btn-gold btn-block" onclick="doRestore()" style="margin-top:0.5rem;">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>
@@ -222,12 +229,34 @@ function showRestoreModal() {
   setTimeout(() => {
     const inp = document.getElementById('restore-lucky');
     if (inp) inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') doRestore(); });
+    const emailInp = document.getElementById('restore-email');
+    if (emailInp) emailInp.addEventListener('input', () => {
+      document.getElementById('restore-code-group').style.display = emailInp.value.trim() ? 'block' : 'none';
+    });
   }, 100);
+}
+
+async function sendRestoreCode() {
+  const email = document.getElementById('restore-email')?.value.trim();
+  if (!email) { showToast('请输入邮箱'); return; }
+  const btn = document.getElementById('restore-send-code-btn');
+  btn.disabled = true;
+  btn.textContent = '发送中...';
+  const res = await api_post('/auth/send-verify-code', { email });
+  btn.disabled = false;
+  if (res.code === 0) {
+    btn.textContent = '已发送';
+    showToast(res.data?.sent ? '验证码已发送到邮箱' : (res.message || '验证码已发送（开发模式见日志）'));
+  } else {
+    btn.textContent = '重新发送';
+    showToast(res.message || '发送失败');
+  }
 }
 
 async function doRestore() {
   const lucky = document.getElementById('restore-lucky')?.value?.trim();
-  const phone = document.getElementById('restore-phone')?.value?.trim();
+  const email = document.getElementById('restore-email')?.value?.trim();
+  const code = document.getElementById('restore-code')?.value?.trim();
   let deviceId = localStorage.getItem('putiyuan_device_id');
   if (!deviceId) {
     deviceId = 'web_' + Math.random().toString(36).slice(2, 10);
@@ -236,10 +265,10 @@ async function doRestore() {
   let res;
   if (lucky) {
     res = await api_post('/auth/restore/by-lucky-code', { lucky_code: lucky, device_id: deviceId });
-  } else if (phone) {
-    res = await api_post('/auth/restore/by-phone', { phone, device_id: deviceId });
+  } else if (email && code) {
+    res = await api_post('/auth/restore/by-email', { email, code, device_id: deviceId });
   } else {
-    showToast('请输入吉祥号或手机号');
+    showToast('请输入吉祥号，或填写邮箱和验证码');
     return;
   }
   if (res.code === 0 && res.data) {
@@ -267,11 +296,11 @@ function showLoginModal() {
   openModal(`
     <h2>登录账号</h2>
     <p style="color:var(--ink-muted);font-size:0.85rem;text-align:center;margin-bottom:1rem;">
-      可用账号、吉祥号或手机号登录
+      可用账号或吉祥号登录
     </p>
     <div class="form-group">
       <label class="form-label">账号</label>
-      <input class="form-input" id="login-account" placeholder="账号 / 吉祥号 / 手机号" autocomplete="username" />
+      <input class="form-input" id="login-account" placeholder="账号 / 吉祥号" autocomplete="username" />
     </div>
     <div class="form-group">
       <label class="form-label">密码</label>
@@ -297,8 +326,8 @@ function showRegisterModal() {
       <input class="form-input" id="reg-nickname" placeholder="可选" />
     </div>
     <div class="form-group">
-      <label class="form-label">手机号</label>
-      <input class="form-input" id="reg-phone" type="tel" placeholder="可选，用于找回账号" />
+      <label class="form-label">邮箱</label>
+      <input class="form-input" id="reg-email" type="email" placeholder="可选，用于找回账号" />
     </div>
     <div class="form-group">
       <label class="form-label">密码</label>
@@ -333,14 +362,14 @@ async function doLogin() {
 async function doRegister() {
   const username = document.getElementById('reg-username')?.value.trim();
   const nickname = document.getElementById('reg-nickname')?.value.trim();
-  const phone = document.getElementById('reg-phone')?.value.trim();
+  const email = document.getElementById('reg-email')?.value.trim();
   const password = document.getElementById('reg-password')?.value || '';
   if (!username || !password) {
     showToast('请输入账号和密码');
     return;
   }
   const res = await api_post('/auth/register', {
-    username, nickname, phone, password, device_id: getDeviceId()
+    username, nickname, email: email || undefined, password, device_id: getDeviceId()
   });
   if (res.code === 0 && res.data) {
     TOKEN = res.data.token;
@@ -355,34 +384,59 @@ async function doRegister() {
   }
 }
 
-function showBindPhoneModal() {
+function showBindEmailModal() {
   openModal(`
-    <h2>绑定手机号</h2>
+    <h2>绑定邮箱</h2>
     <p style="color:var(--ink-muted);font-size:0.85rem;text-align:center;margin-bottom:1rem;">
-      绑定后可用手机号找回账号
+      绑定后可通过邮箱验证码找回账号
     </p>
     <div class="form-group">
-      <label class="form-label">手机号</label>
-      <input class="form-input" id="bind-phone" type="tel" placeholder="输入手机号" />
+      <label class="form-label">邮箱</label>
+      <input class="form-input" id="bind-email" type="email" placeholder="输入邮箱" />
     </div>
-    <button class="btn btn-gold btn-block" onclick="doBindPhone()">绑定</button>
+    <div class="form-group">
+      <label class="form-label">验证码</label>
+      <div style="display:flex;gap:0.5rem;">
+        <input class="form-input" id="bind-code" type="text" placeholder="6 位验证码" style="flex:1;" />
+        <button class="btn btn-ghost" id="bind-send-code-btn" onclick="sendBindEmailCode()">发送验证码</button>
+      </div>
+    </div>
+    <button class="btn btn-gold btn-block" onclick="doBindEmail()">绑定</button>
   `);
 }
 
-async function doBindPhone() {
-  const phone = document.getElementById('bind-phone')?.value.trim();
-  if (!phone) {
-    showToast('请输入手机号');
+async function sendBindEmailCode() {
+  const email = document.getElementById('bind-email')?.value.trim();
+  if (!email) { showToast('请输入邮箱'); return; }
+  const btn = document.getElementById('bind-send-code-btn');
+  btn.disabled = true;
+  btn.textContent = '发送中...';
+  const res = await api_post('/auth/send-verify-code', { email });
+  btn.disabled = false;
+  if (res.code === 0) {
+    btn.textContent = '已发送';
+    showToast(res.data?.sent ? '验证码已发送到邮箱' : (res.message || '验证码已发送（开发模式见日志）'));
+  } else {
+    btn.textContent = '重新发送';
+    showToast(res.message || '发送失败');
+  }
+}
+
+async function doBindEmail() {
+  const email = document.getElementById('bind-email')?.value.trim();
+  const code = document.getElementById('bind-code')?.value.trim();
+  if (!email || !code) {
+    showToast('请输入邮箱和验证码');
     return;
   }
-  const res = await api_post('/auth/bind-phone', { phone });
+  const res = await api_post('/auth/bind-email', { email, code });
   if (res.code === 0 && res.data) {
     TOKEN = res.data.token;
     CURRENT_USER = res.data.user;
     localStorage.setItem('putiyuan_token', TOKEN);
     closeModal();
     updateUserBadge();
-    showToast('手机号已绑定');
+    showToast('邮箱已绑定');
     window.dispatchEvent(new CustomEvent('putiyuan:user-updated', { detail: CURRENT_USER }));
   } else {
     showToast(res.message || '绑定失败');

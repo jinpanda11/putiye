@@ -19,7 +19,7 @@
       <div class="section-title" style="margin-bottom:1rem;"><span class="deco"></span>登录账号</div>
       <div class="form-group">
         <label class="form-label">账号</label>
-        <input class="form-input" id="login-account-page" placeholder="账号 / 吉祥号 / 手机号" autocomplete="username" />
+        <input class="form-input" id="login-account-page" placeholder="账号 / 吉祥号" autocomplete="username" />
       </div>
       <div class="form-group">
         <label class="form-label">密码</label>
@@ -39,8 +39,8 @@
         <input class="form-input" id="reg-nickname-page" placeholder="可选" />
       </div>
       <div class="form-group">
-        <label class="form-label">手机号</label>
-        <input class="form-input" id="reg-phone-page" type="tel" placeholder="可选，用于找回账号" />
+        <label class="form-label">邮箱</label>
+        <input class="form-input" id="reg-email-page" type="email" placeholder="可选，用于找回账号" />
       </div>
       <div class="form-group">
         <label class="form-label">密码</label>
@@ -72,10 +72,10 @@ async function loginFromPage() {
 async function registerFromPage() {
   const username = document.getElementById('reg-username-page').value.trim();
   const nickname = document.getElementById('reg-nickname-page').value.trim();
-  const phone = document.getElementById('reg-phone-page').value.trim();
+  const email = document.getElementById('reg-email-page').value.trim();
   const password = document.getElementById('reg-password-page').value;
   if (!username || !password) { showToast('请输入账号和密码'); return; }
-  const res = await api_post('/auth/register', { username, nickname, phone, password, device_id: getDeviceId() });
+  const res = await api_post('/auth/register', { username, nickname, email: email || undefined, password, device_id: getDeviceId() });
   if (res.code === 0 && res.data) {
     TOKEN = res.data.token;
     CURRENT_USER = res.data.user;

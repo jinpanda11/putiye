@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """菩提苑 本地镜像服务 - Full backend with API + static file serving."""
-import os, json, re, uuid, hashlib, hmac, base64, sqlite3, datetime, mimetypes, html, random, string, time
+import os, json, re, uuid, hashlib, hmac, base64, sqlite3, datetime, mimetypes, html, random, string, time, smtplib, threading
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 import traceback
+from email.message import EmailMessage
 from urllib.parse import urlparse, parse_qs, urlencode
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
@@ -13,6 +14,18 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get('PUTIYUAN_DB_PATH') or os.path.join(BASE_DIR, 'data.db')
 SECRET_KEY = os.environ.get('PUTIYUAN_SECRET_KEY') or 'putiyuan-local-dev-k3y!@#'
 TOKEN_EXPIRE_DAYS = 365
+
+# ─── Email (SMTP) Config ─────────────────────────────────────────────────────
+SMTP_HOST = os.environ.get('PUTIYUAN_SMTP_HOST') or ''
+SMTP_PORT = int(os.environ.get('PUTIYUAN_SMTP_PORT') or 587)
+SMTP_USER = os.environ.get('PUTIYUAN_SMTP_USER') or ''
+SMTP_PASS = os.environ.get('PUTIYUAN_SMTP_PASS') or ''
+SMTP_FROM = os.environ.get('PUTIYUAN_SMTP_FROM') or SMTP_USER
+VERIFY_CODE_EXPIRE_MINUTES = 10
+
+# In-memory cache for email verify codes (also persisted to DB)
+_verify_code_cache = {}
+_verify_code_lock = threading.Lock()
 
 # ─── Database ────────────────────────────────────────────────────────────────
 
@@ -31,7 +44,8 @@ def init_db():
             lucky_code TEXT UNIQUE NOT NULL,
             username TEXT,
             device_id TEXT,
-            phone TEXT,
+            email TEXT,
+            email_verified INTEGER DEFAULT 0,
             nickname TEXT,
             password_hash TEXT,
             is_admin INTEGER DEFAULT 0,
@@ -43,6 +57,13 @@ def init_db():
             total_merit_added INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now','localtime')),
             updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS email_verify_codes (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            code TEXT NOT NULL,
+            user_id TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE TABLE IF NOT EXISTS bazi_sessions (
             id TEXT PRIMARY KEY,
@@ -190,6 +211,8 @@ def migrate_users(conn):
         ("is_admin", "ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0"),
         ("registered_at", "ALTER TABLE users ADD COLUMN registered_at TEXT"),
         ("last_login_at", "ALTER TABLE users ADD COLUMN last_login_at TEXT"),
+        ("email", "ALTER TABLE users ADD COLUMN email TEXT"),
+        ("email_verified", "ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0"),
     ]
     for col, sql in migrations:
         if col not in cols:
@@ -283,9 +306,13 @@ def user_payload(user):
         "lucky_code": user.get('lucky_code'),
         "username": user.get('username'),
         "nickname": user.get('nickname') or user.get('username') or user.get('lucky_code'),
-        "phone": user.get('phone'),
+        "email": user.get('email'),
+        "email_verified": bool(user.get('email_verified')),
         "device_id": user.get('device_id'),
         "merit": user.get('merit') or 0,
+        "phone": None,  # BC: old frontend still expects this field
+        "has_phone": False,
+        "phone_masked": None,
         "is_registered": bool(user.get('password_hash')),
         "is_admin": bool(user.get('is_admin')),
     }
@@ -299,6 +326,68 @@ def gen_lucky_code():
 
 def gen_id():
     return uuid.uuid4().hex[:12]
+
+# ─── Email Verification ───────────────────────────────────────────────────────
+
+def send_verify_email(to_email, code):
+    """Send verification code via SMTP. Returns True on success, False on failure."""
+    if not SMTP_HOST or not SMTP_USER:
+        print(f"  [EMAIL] SMTP not configured. Verification code for {to_email}: {code}")
+        return True  # Pretend success in dev mode so binding still works
+    try:
+        msg = EmailMessage()
+        msg.set_content(f"您的菩提苑邮箱验证码是：{code}\n\n验证码 {VERIFY_CODE_EXPIRE_MINUTES} 分钟内有效。如非本人操作，请忽略此邮件。")
+        msg['Subject'] = f'菩提苑邮箱验证码'
+        msg['From'] = SMTP_FROM
+        msg['To'] = to_email
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+        print(f"  [EMAIL] Verification code sent to {to_email}")
+        return True
+    except Exception as e:
+        print(f"  [EMAIL] Failed to send to {to_email}: {e}")
+        return False
+
+def gen_verify_code():
+    return str(random.randint(100000, 999999))
+
+def save_verify_code(email, code, user_id=''):
+    conn = get_db()
+    conn.execute("INSERT INTO email_verify_codes (id, email, code, user_id) VALUES (?,?,?,?)",
+                 (gen_id(), email, code, user_id))
+    conn.commit()
+    conn.close()
+    with _verify_code_lock:
+        _verify_code_cache[email] = {'code': code, 'time': time.time(), 'user_id': user_id}
+
+def check_verify_code(email, code):
+    """Check if code matches any recent (within expiry window) record for this email."""
+    with _verify_code_lock:
+        cached = _verify_code_cache.get(email)
+        if cached and cached['code'] == code and (time.time() - cached['time']) < VERIFY_CODE_EXPIRE_MINUTES * 60:
+            return True
+    # Fallback: check DB (e.g. after server restart)
+    conn = get_db()
+    expiry = (datetime.datetime.utcnow() - datetime.timedelta(minutes=VERIFY_CODE_EXPIRE_MINUTES)).isoformat()
+    row = conn.execute(
+        "SELECT id FROM email_verify_codes WHERE email=? AND code=? AND created_at>=? ORDER BY created_at DESC LIMIT 1",
+        (email, code, expiry)
+    ).fetchone()
+    conn.close()
+    if row:
+        with _verify_code_lock:
+            _verify_code_cache[email] = {'code': code, 'time': time.time()}
+        return True
+    return False
+
+def cleanup_expired_codes():
+    expiry = (datetime.datetime.utcnow() - datetime.timedelta(minutes=VERIFY_CODE_EXPIRE_MINUTES)).isoformat()
+    conn = get_db()
+    conn.execute("DELETE FROM email_verify_codes WHERE created_at<?", (expiry,))
+    conn.commit()
+    conn.close()
 
 # ─── Response Helpers ────────────────────────────────────────────────────────
 
@@ -523,7 +612,7 @@ def get_auth_user(h):
         uid = verify_token(auth[7:])
         if uid:
             conn = get_db()
-            row = conn.execute("SELECT id, lucky_code, username, nickname, phone, device_id, password_hash, is_admin FROM users WHERE id=?", (uid,)).fetchone()
+            row = conn.execute("SELECT id, lucky_code, username, nickname, email, device_id, password_hash, is_admin FROM users WHERE id=?", (uid,)).fetchone()
             conn.close()
             if row:
                 return dict(row)
@@ -1460,8 +1549,9 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             '/auth/register':            self.route_auth_register,
             '/auth/login':               self.route_auth_login,
             '/auth/restore/by-lucky-code': self.route_auth_restore_lucky,
-            '/auth/restore/by-phone':    self.route_auth_restore_phone,
-            '/auth/bind-phone':          self.route_auth_bind_phone,
+            '/auth/restore/by-email':    self.route_auth_restore_email,
+            '/auth/send-verify-code':    self.route_auth_send_verify_code,
+            '/auth/bind-email':          self.route_auth_bind_email,
             '/auth/me':                  self.route_auth_me,
             '/auth/history/push':        self.route_history_push,
             '/auth/history/list':        self.route_history_list,
@@ -1577,7 +1667,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             "token": token,
             "user": user_payload({
                 "id": uid, "lucky_code": lucky_code, "username": None,
-                "nickname": lucky_code, "phone": None, "device_id": device_id,
+                "nickname": lucky_code, "email": None, "device_id": device_id,
                 "password_hash": None, "is_admin": 0
             })
         })
@@ -1586,7 +1676,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         username = (data.get('username') or '').strip().lower()
         password = data.get('password') or ''
         nickname = (data.get('nickname') or '').strip()
-        phone = (data.get('phone') or '').strip()
+        email = (data.get('email') or '').strip()
         device_id = data.get('device_id') or ''
 
         if not re.fullmatch(r'[a-zA-Z0-9_]{3,24}', username):
@@ -1602,13 +1692,6 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             conn.close()
             json_err(self, "该账号已被注册")
             return
-        if phone:
-            phone_owner = conn.execute("SELECT id FROM users WHERE phone=?", (phone,)).fetchone()
-            current = get_auth_user(self)
-            if phone_owner and (not current or phone_owner['id'] != current['id']):
-                conn.close()
-                json_err(self, "该手机号已被绑定")
-                return
 
         current = get_auth_user(self)
         first_registered = conn.execute("SELECT COUNT(*) AS c FROM users WHERE password_hash IS NOT NULL AND password_hash<>''").fetchone()['c'] == 0
@@ -1618,18 +1701,24 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         if current and not current.get('password_hash'):
             uid = current['id']
             conn.execute(
-                "UPDATE users SET username=?, nickname=?, phone=COALESCE(NULLIF(?,''), phone), password_hash=?, is_admin=?, registered_at=?, last_login_at=? WHERE id=?",
-                (username, nickname or username, phone, password_hash, 1 if first_registered else 0, now, now, uid)
+                "UPDATE users SET username=?, nickname=?, password_hash=?, is_admin=?, registered_at=?, last_login_at=? WHERE id=?",
+                (username, nickname or username, password_hash, 1 if first_registered else 0, now, now, uid)
             )
         else:
             uid = gen_id()
             lucky_code = gen_lucky_code()
             conn.execute(
-                "INSERT INTO users (id, lucky_code, username, device_id, phone, nickname, password_hash, is_admin, registered_at, last_login_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (uid, lucky_code, username, device_id, phone or None, nickname or username, password_hash, 1 if first_registered else 0, now, now)
+                "INSERT INTO users (id, lucky_code, username, device_id, nickname, password_hash, is_admin, registered_at, last_login_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (uid, lucky_code, username, device_id, nickname or username, password_hash, 1 if first_registered else 0, now, now)
             )
             ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
             conn.execute("INSERT INTO referral_codes (id, user_id, code) VALUES (?,?,?)", (gen_id(), uid, ref_code))
+
+        # If email provided and not already bound to another user, bind it
+        if email:
+            email_owner = conn.execute("SELECT id FROM users WHERE email=? AND id!=?", (email, uid)).fetchone()
+            if not email_owner:
+                conn.execute("UPDATE users SET email=?, email_verified=0 WHERE id=?", (email, uid))
 
         token = make_token(uid)
         conn.execute("UPDATE users SET token=?, token_created_at=? WHERE id=?", (token, now, uid))
@@ -1648,7 +1737,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
 
         conn = get_db()
         row = conn.execute(
-            "SELECT * FROM users WHERE lower(username)=? OR lower(lucky_code)=? OR phone=?",
+            "SELECT * FROM users WHERE lower(username)=? OR lower(lucky_code)=?",
             (account, account, account)
         ).fetchone()
         if not row:
@@ -1698,18 +1787,25 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             "user": user_payload({**user, "device_id": device_id})
         })
 
-    def route_auth_restore_phone(self, data):
-        phone = data.get('phone', '')
+    def route_auth_restore_email(self, data):
+        email = (data.get('email') or '').strip().lower()
+        verify_code = data.get('code', '')
         device_id = data.get('device_id', '')
-        if not phone:
-            json_err(self, "请输入手机号")
+        if not email:
+            json_err(self, "请输入邮箱")
+            return
+        if not verify_code:
+            json_err(self, "请输入验证码")
+            return
+        if not check_verify_code(email, verify_code):
+            json_err(self, "验证码错误或已过期")
             return
 
         conn = get_db()
-        user = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
         if not user:
             conn.close()
-            json_err(self, "该手机号未注册")
+            json_err(self, "该邮箱未绑定账号")
             return
 
         user = dict(user)
@@ -1721,29 +1817,61 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
 
         json_resp(self, {
             "token": token,
-            "user": user_payload({**user, "phone": phone, "device_id": device_id})
+            "user": user_payload({**user, "device_id": device_id})
         })
 
-    def route_auth_bind_phone(self, data):
+    def route_auth_send_verify_code(self, data):
         user = require_auth(self)
         if not user:
             return
-        phone = data.get('phone', '')
-        if not phone:
-            json_err(self, "请输入手机号")
+        email = (data.get('email') or '').strip().lower()
+        if not email or not re.match(r'[^@]+@[^@]+\.[^@]+', email):
+            json_err(self, "请输入有效的邮箱地址")
+            return
+
+        # Check email not used by another user
+        conn = get_db()
+        existing = conn.execute("SELECT id FROM users WHERE email=? AND id!=?", (email, user['id'])).fetchone()
+        if existing:
+            conn.close()
+            json_err(self, "该邮箱已被其他账号绑定")
+            return
+        conn.close()
+
+        code = gen_verify_code()
+        if send_verify_email(email, code):
+            save_verify_code(email, code, user['id'])
+            json_resp(self, {"email": email, "sent": True})
+        else:
+            json_resp(self, {"email": email, "sent": False, "code_hint": code if not SMTP_HOST else None},
+                      0, "邮件发送失败（开发模式：验证码见服务器日志）")
+
+    def route_auth_bind_email(self, data):
+        user = require_auth(self)
+        if not user:
+            return
+        email = (data.get('email') or '').strip().lower()
+        code = data.get('code', '')
+        if not email:
+            json_err(self, "请输入邮箱")
+            return
+        if not code:
+            json_err(self, "请输入验证码")
+            return
+        if not check_verify_code(email, code):
+            json_err(self, "验证码错误或已过期")
             return
 
         conn = get_db()
-        # Check phone not used
-        existing = conn.execute("SELECT id FROM users WHERE phone=? AND id!=?", (phone, user['id'])).fetchone()
+        existing = conn.execute("SELECT id FROM users WHERE email=? AND id!=?", (email, user['id'])).fetchone()
         if existing:
             conn.close()
-            json_err(self, "该手机号已被绑定")
+            json_err(self, "该邮箱已被绑定")
             return
 
         token = make_token(user['id'])
-        conn.execute("UPDATE users SET phone=?, token=?, token_created_at=? WHERE id=?",
-                    (phone, token, datetime.datetime.utcnow().isoformat(), user['id']))
+        conn.execute("UPDATE users SET email=?, email_verified=1, token=?, token_created_at=? WHERE id=?",
+                    (email, token, datetime.datetime.utcnow().isoformat(), user['id']))
         conn.commit()
 
         updated = dict(conn.execute("SELECT * FROM users WHERE id=?", (user['id'],)).fetchone())
@@ -1769,8 +1897,12 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             "id": u['id'], "lucky_code": u['lucky_code'],
             "username": u.get('username'),
             "nickname": u['nickname'] or u['lucky_code'],
-            "phone": u['phone'], "device_id": u['device_id'],
+            "email": u.get('email'), "email_verified": bool(u.get('email_verified')),
+            "device_id": u['device_id'],
             "merit": u['merit'] or 0,
+            "phone": None,
+            "has_phone": False,
+            "phone_masked": None,
             "earnings": u['earnings'] or 0,
             "referral_count": u['referral_count'] or 0,
             "is_registered": bool(u.get('password_hash')),
@@ -1795,7 +1927,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         }
         recent_users = [
             dict(row) for row in conn.execute(
-                "SELECT id,lucky_code,username,nickname,phone,is_admin,created_at,registered_at,last_login_at,total_merit_added FROM users ORDER BY created_at DESC LIMIT 8"
+                "SELECT id,lucky_code,username,nickname,email,is_admin,created_at,registered_at,last_login_at,total_merit_added FROM users ORDER BY created_at DESC LIMIT 8"
             ).fetchall()
         ]
         recent_blessings = [
@@ -1818,7 +1950,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         total = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()['c']
         rows = [
             dict(row) for row in conn.execute(
-                """SELECT id,lucky_code,username,nickname,phone,is_admin,merit,total_merit_added,
+                """SELECT id,lucky_code,username,nickname,email,is_admin,merit,total_merit_added,
                           created_at,registered_at,last_login_at
                    FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?""",
                 (limit, offset)
