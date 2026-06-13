@@ -1265,10 +1265,10 @@ def build_almanac_week():
 
 def meditation_catalog():
     tracks = [
-        {"id":"lotus-breath","title":"莲池观息","subtitle":"钟磬与缓慢呼吸","duration":300,"icon":"莲","url":SILENCE_WAV,"license":"本地演示"},
-        {"id":"mountain-bell","title":"山寺晚钟","subtitle":"远山钟声与静水","duration":420,"icon":"钟","url":SILENCE_WAV,"license":"本地演示"},
-        {"id":"woodfish","title":"木鱼清心","subtitle":"轻木鱼节律","duration":360,"icon":"木","url":SILENCE_WAV,"license":"本地演示"},
-        {"id":"rain-temple","title":"雨落禅院","subtitle":"细雨入瓦，心念归一","duration":480,"icon":"雨","url":SILENCE_WAV,"license":"本地演示"},
+        {"id":"lotus-breath","title":"莲池观息","subtitle":"钟磬与缓慢呼吸","duration":300,"icon":"莲","url":"/music/atlasaudio-calming-zen-519422.mp3","license":"免费音效"},
+        {"id":"mountain-bell","title":"山寺晚钟","subtitle":"远山钟声与静水","duration":420,"icon":"钟","url":"/music/leberch-slow-zen-255691.mp3","license":"免费音效"},
+        {"id":"woodfish","title":"木鱼清心","subtitle":"轻木鱼节律","duration":360,"icon":"木","url":"/music/quietphase-ambient-zen-489706.mp3","license":"免费音效"},
+        {"id":"rain-temple","title":"雨落禅院","subtitle":"细雨入瓦，心念归一","duration":480,"icon":"雨","url":"/music/prettyjohn1-calming-zen-537655.mp3","license":"免费音效"},
     ]
     return {
         "quote": {"text": "应无所住，而生其心。", "source": "《金刚经》"},
