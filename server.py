@@ -697,6 +697,34 @@ document.addEventListener('click',function(e){var a=e.target.closest('a');if(a&&
 </script>
 </head>'''
 
+SPA_ROUTES = {
+    'qifu',
+    'almanac',
+    'lottery',
+    'bazi',
+    'dream',
+    'palmistry',
+    'naming',
+    'divination',
+    'meditation',
+    'profile',
+    'more',
+    'incense',
+    'admin',
+}
+
+def is_spa_route(path):
+    clean = path.strip('/')
+    if not clean:
+        return False
+    parts = clean.split('/')
+    if parts[0] not in SPA_ROUTES:
+        return False
+    if clean.endswith('/index.html'):
+        return True
+    _, ext = os.path.splitext(parts[-1])
+    return ext == ''
+
 # ─── Bazi Engine ─────────────────────────────────────────────────────────────
 
 TIAN_GAN = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸']
@@ -1605,10 +1633,30 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         except Exception as e:
             print(f"  [ERROR] serve_static: {e}")
 
+    def serve_spa_index(self):
+        index_path = os.path.join(BASE_DIR, 'index.html')
+        if os.path.isfile(index_path):
+            with open(index_path, 'rb') as f:
+                content = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            self._safe_write(content)
+            return
+        self.send_response(404)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.end_headers()
+        self._safe_write(b'404 Not Found')
+
     def _serve_static(self, path):
         # Default to index.html
         if path == '' or path == '/':
             path = '/index.html'
+
+        if is_spa_route(path):
+            self.serve_spa_index()
+            return
 
         file_path = os.path.join(BASE_DIR, path.lstrip('/'))
         file_path = os.path.normpath(file_path)
@@ -1627,11 +1675,15 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             with open(file_path, 'rb') as f:
                 content = f.read()
 
-            # Inject RSC script into HTML files
-            if file_path.endswith('.html') and b'</head>' in content and b'document.addEventListener' not in content:
+            is_vite_index = os.path.normcase(file_path) == os.path.normcase(os.path.join(BASE_DIR, 'index.html'))
+
+            # Inject the legacy navigation patch only into old static HTML pages.
+            if not is_vite_index and file_path.endswith('.html') and b'</head>' in content and b'document.addEventListener' not in content:
                 content = content.replace(b'</head>', RSC_SCRIPT)
 
             ctype, _ = mimetypes.guess_type(file_path)
+            if file_path.endswith('.html'):
+                ctype = 'text/html; charset=utf-8'
             self.send_response(200)
             self.send_header('Content-Type', ctype or 'application/octet-stream')
             self.send_header('Content-Length', str(len(content)))
@@ -1639,22 +1691,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             self._safe_write(content)
         else:
             # SPA fallback: serve index.html
-            index_path = os.path.join(BASE_DIR, 'index.html')
-            if os.path.isfile(index_path):
-                with open(index_path, 'rb') as f:
-                    content = f.read()
-                if b'</head>' in content and b'document.addEventListener' not in content:
-                    content = content.replace(b'</head>', RSC_SCRIPT)
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/html; charset=utf-8')
-                self.send_header('Content-Length', str(len(content)))
-                self.end_headers()
-                self._safe_write(content)
-            else:
-                self.send_response(404)
-                self.send_header('Content-Type', 'text/plain')
-                self.end_headers()
-                self._safe_write(b'404 Not Found')
+            self.serve_spa_index()
 
     def handle_api(self, method, path, data):
         # Trim /api/v1 prefix

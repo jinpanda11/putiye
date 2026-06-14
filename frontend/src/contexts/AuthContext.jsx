@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { auth, getSavedUser, saveUser, getToken, clearToken } from '../api/client';
+import { auth, getSavedUser, saveUser, getToken, clearToken, clearDeviceId } from '../api/client';
 
 const AuthContext = createContext(null);
 
@@ -85,19 +85,26 @@ export function AuthProvider({ children }) {
   const switchMode = useCallback((m) => setModalMode(m), []);
   const isAuthenticated = Boolean(user?.is_registered || user?.username || user?.email || user?.is_admin);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    setLoading(true);
     clearToken();
+    clearDeviceId();
     try { localStorage.removeItem('putiyuan_user_v2'); } catch {
       // Best-effort local cache cleanup.
     }
     setUser(null);
-    auth.anonymousInit().then(data => {
+    try {
+      const data = await auth.anonymousInit();
       if (data?.user) {
         setUser(data.user);
         saveUser(data.user);
       }
-    }).catch(() => {});
-    window.dispatchEvent(new CustomEvent('putiyuan:user-updated'));
+    } catch {
+      setUser(null);
+    } finally {
+      setLoading(false);
+      window.dispatchEvent(new CustomEvent('putiyuan:user-updated'));
+    }
   }, []);
 
   const value = { user, loading, modalOpen, modalMode, isAuthenticated, setModalOpen, setUser, openLogin, closeModal, switchMode, logout };

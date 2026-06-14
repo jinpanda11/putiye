@@ -1,4 +1,5 @@
 const API_BASE = '/api/v1';
+const REQUEST_TIMEOUT_MS = 15000;
 
 function getToken() {
   try { return localStorage.getItem('putiyuan_token'); } catch { return null; }
@@ -18,6 +19,12 @@ function clearToken() {
   }
 }
 
+function clearDeviceId() {
+  try { localStorage.removeItem('putiyuan_device_id'); } catch {
+    // A new anonymous session will be created on the next request.
+  }
+}
+
 function getDeviceId() {
   try {
     let d = localStorage.getItem('putiyuan_device_id');
@@ -31,7 +38,7 @@ function getDeviceId() {
   }
 }
 
-export { getToken, setToken, clearToken, getDeviceId };
+export { getToken, setToken, clearToken, clearDeviceId, getDeviceId };
 
 export function getSavedUser() {
   try {
@@ -57,11 +64,22 @@ async function request(method, path, data, requireAuth = true) {
     if (token) headers.Authorization = 'Bearer ' + token;
   }
 
-  const res = await fetch(API_BASE + path, {
-    method,
-    headers,
-    body: data ? JSON.stringify(data) : undefined,
-  });
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(API_BASE + path, {
+      method,
+      headers,
+      body: data ? JSON.stringify(data) : undefined,
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('请求超时，请稍后再试', { cause: e });
+    throw e;
+  } finally {
+    window.clearTimeout(timer);
+  }
 
   let json;
   try {
