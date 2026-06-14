@@ -80,7 +80,10 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const openLogin = useCallback(() => setModalOpen(true), []);
+  const openLogin = useCallback(() => {
+    setModalMode('login');
+    setModalOpen(true);
+  }, []);
   const closeModal = useCallback(() => setModalOpen(false), []);
   const switchMode = useCallback((m) => setModalMode(m), []);
   const isAuthenticated = Boolean(user?.is_registered || user?.username || user?.email || user?.is_admin);

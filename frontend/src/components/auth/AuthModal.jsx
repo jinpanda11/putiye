@@ -6,8 +6,8 @@ import { auth, setToken, saveUser } from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
 
 export function AuthModal() {
-  const { modalOpen, closeModal, modalMode, setUser } = useAuth();
-  const [mode, setMode] = useState(modalMode || 'login');
+  const { modalOpen, closeModal, modalMode, setUser, switchMode } = useAuth();
+  const mode = modalMode || 'login';
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
@@ -15,11 +15,6 @@ export function AuthModal() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-
-  // Sync mode from context
-  if (modalMode !== mode && modalOpen) {
-    setMode(modalMode);
-  }
 
   const handleLogin = async () => {
     if (!account || !password) { setError('请输入账号和密码'); return; }
@@ -67,7 +62,7 @@ export function AuthModal() {
           </div>
           {error && <p className="text-sm text-vermillion-light bg-vermillion/10 rounded-md px-3 py-2 border border-vermillion/30">{error}</p>}
           <Button onClick={handleLogin} loading={loading} className="w-full h-12 text-lg">登录</Button>
-          <button type="button" onClick={() => { setError(null); setMode('register'); }} className="w-full py-2 rounded-lg border border-gold/30 text-gold text-sm hover:bg-gold/10 transition-colors">
+          <button type="button" onClick={() => { setError(null); switchMode('register'); }} className="w-full py-2 rounded-lg border border-gold/30 text-gold text-sm hover:bg-gold/10 transition-colors">
             还没有账号，去注册
           </button>
         </div>
@@ -98,7 +93,7 @@ export function AuthModal() {
           </div>
           {error && <p className="text-sm text-vermillion-light bg-vermillion/10 rounded-md px-3 py-2 border border-vermillion/30">{error}</p>}
           <Button onClick={handleRegister} loading={loading} className="w-full h-12 text-lg">注册</Button>
-          <button type="button" onClick={() => { setError(null); setMode('login'); }} className="w-full py-2 rounded-lg border border-gold/30 text-gold text-sm hover:bg-gold/10 transition-colors">
+          <button type="button" onClick={() => { setError(null); switchMode('login'); }} className="w-full py-2 rounded-lg border border-gold/30 text-gold text-sm hover:bg-gold/10 transition-colors">
             已有账号，去登录
           </button>
         </div>

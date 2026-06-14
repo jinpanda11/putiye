@@ -556,12 +556,12 @@ def ai_chat(messages, model=None, temperature=None, timeout_seconds=None):
         raise RuntimeError("大模型返回为空")
     return content.strip(), cfg
 
-def ai_text_or_none(prompt, user_text, model=None, temperature=None):
+def ai_text_or_none(prompt, user_text, model=None, temperature=None, timeout_seconds=None):
     try:
         text, cfg = ai_chat([
             {"role": "system", "content": prompt},
             {"role": "user", "content": user_text},
-        ], model=model, temperature=temperature)
+        ], model=model, temperature=temperature, timeout_seconds=timeout_seconds)
         return text, cfg
     except Exception as e:
         print(f"  [AI fallback] {e}")
@@ -2591,6 +2591,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             "你是菩提苑起名师。请基于姓氏、性别、五行喜用，生成 5 个中文宝宝名。只输出 JSON 数组，每项包含 rank, full_name, pinyin, name_meaning, poem_ref, wuxing_score, wuxing_analysis, phonetic_score, phonetic_analysis, stroke_score, total_stroke, description。",
             json.dumps({"surname": surname, "gender": gender, "wuxing_needed": wuxing}, ensure_ascii=False),
             temperature=0.9,
+            timeout_seconds=5,
         )
         ai_names = json_from_ai_text(ai_text) if ai_text else None
         if isinstance(ai_names, dict):
