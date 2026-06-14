@@ -43,7 +43,7 @@ fi
 echo "[putiyuan-update] updating $LOCAL_REV -> $REMOTE_REV"
 git pull --ff-only origin "$BRANCH"
 
-"$PYTHON_BIN" -m py_compile server.py mirror-server.py
+"$PYTHON_BIN" -m py_compile server.py
 systemctl restart "$SERVICE"
 systemctl --no-pager --full status "$SERVICE" | sed -n '1,12p'
 
