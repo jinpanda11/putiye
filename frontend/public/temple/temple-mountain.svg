@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1208"/>
+      <stop offset="0.4" stop-color="#2a1d10"/>
+      <stop offset="1" stop-color="#0a0604"/>
+    </linearGradient>
+    <linearGradient id="mountain" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d160e" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#0c0805" stop-opacity="1"/>
+    </linearGradient>
+    <radialGradient id="moon" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f5e6c8" stop-opacity="0.95"/>
+      <stop offset="0.6" stop-color="#c9a96e" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#c9a96e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a2a18" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#1a1208" stop-opacity="0.95"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="600" fill="url(#sky)"/>
+
+  <circle cx="640" cy="120" r="60" fill="url(#moon)"/>
+  <circle cx="640" cy="120" r="34" fill="#f5e6c8" opacity="0.45"/>
+
+  <!-- 远山 -->
+  <path d="M0,360 Q120,260 240,310 T480,300 T800,320 L800,600 L0,600 Z" fill="url(#mountain)" opacity="0.8"/>
+
+  <!-- 中山 -->
+  <path d="M-20,440 Q160,340 320,400 T620,390 T820,420 L820,600 L-20,600 Z" fill="url(#ink)" opacity="0.9"/>
+
+  <!-- 寺庙轮廓 -->
+  <g transform="translate(380, 360)" opacity="0.92">
+    <!-- 屋檐 -->
+    <path d="M-90,30 L-110,18 L0,-30 L110,18 L90,30 Z" fill="#3a2616" stroke="#7a542c" stroke-width="1"/>
+    <!-- 屋檐二层 -->
+    <path d="M-78,55 L-95,44 L0,-2 L95,44 L78,55 Z" fill="#3a2616" stroke="#7a542c" stroke-width="1"/>
+    <!-- 寺墙 -->
+    <rect x="-66" y="55" width="132" height="80" fill="#2c1d10" stroke="#7a542c" stroke-width="1"/>
+    <!-- 寺门 -->
+    <rect x="-22" y="80" width="44" height="55" fill="#1a1208" stroke="#c9a96e" stroke-width="0.8"/>
+    <circle cx="0" cy="105" r="6" fill="#c9a96e" opacity="0.7"/>
+    <!-- 灯笼 -->
+    <ellipse cx="-46" cy="40" rx="6" ry="9" fill="#c43d3d" opacity="0.75"/>
+    <ellipse cx="46" cy="40" rx="6" ry="9" fill="#c43d3d" opacity="0.75"/>
+    <!-- 屋脊兽 -->
+    <circle cx="0" cy="-32" r="4" fill="#c9a96e"/>
+  </g>
+
+  <!-- 前景松树剪影 -->
+  <g opacity="0.85">
+    <path d="M80,520 L70,420 M80,520 L100,440 M80,520 L60,450 M80,520 L88,400" stroke="#1a1208" stroke-width="2" fill="none"/>
+    <ellipse cx="78" cy="408" rx="32" ry="14" fill="#0e0805"/>
+    <ellipse cx="78" cy="430" rx="44" ry="14" fill="#0e0805"/>
+    <ellipse cx="78" cy="452" rx="50" ry="14" fill="#0e0805"/>
+  </g>
+  <g opacity="0.85" transform="translate(700,30)">
+    <path d="M0,490 L-6,400 M0,490 L20,420 M0,490 L-20,430 M0,490 L8,380" stroke="#1a1208" stroke-width="2" fill="none"/>
+    <ellipse cx="-2" cy="386" rx="22" ry="10" fill="#0e0805"/>
+    <ellipse cx="-2" cy="406" rx="34" ry="11" fill="#0e0805"/>
+    <ellipse cx="-2" cy="426" rx="40" ry="12" fill="#0e0805"/>
+  </g>
+
+  <!-- 雾气 -->
+  <ellipse cx="400" cy="500" rx="500" ry="40" fill="#d4c5a9" opacity="0.06"/>
+  <ellipse cx="200" cy="540" rx="380" ry="28" fill="#d4c5a9" opacity="0.05"/>
+</svg>

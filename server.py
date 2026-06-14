@@ -172,6 +172,50 @@ def init_db():
             earnings REAL DEFAULT 0.0,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        CREATE TABLE IF NOT EXISTS referral_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            enabled INTEGER DEFAULT 1,
+            commission_rate REAL DEFAULT 10.0,
+            invite_merit INTEGER DEFAULT 5,
+            min_withdraw_amount REAL DEFAULT 10.0,
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS referral_relations (
+            id TEXT PRIMARY KEY,
+            inviter_user_id TEXT NOT NULL,
+            invitee_user_id TEXT UNIQUE NOT NULL,
+            invite_code TEXT NOT NULL,
+            device_id TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS referral_commissions (
+            id TEXT PRIMARY KEY,
+            inviter_user_id TEXT NOT NULL,
+            invitee_user_id TEXT,
+            order_id TEXT UNIQUE,
+            amount REAL NOT NULL,
+            rate REAL NOT NULL,
+            base_amount REAL NOT NULL,
+            status TEXT DEFAULT 'settled',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS referral_withdrawals (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            amount REAL NOT NULL,
+            note TEXT,
+            status TEXT DEFAULT 'pending_review',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS entitlements (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            product_id TEXT NOT NULL,
+            session_id TEXT,
+            order_id TEXT UNIQUE,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         CREATE TABLE IF NOT EXISTS ai_config (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             enabled INTEGER DEFAULT 0,
@@ -199,6 +243,8 @@ def init_db():
     )
     migrate_users(conn)
     migrate_payments(conn)
+    migrate_referrals(conn)
+    migrate_entitlements(conn)
     seed_payment_config(conn)
     conn.commit()
     conn.close()
@@ -226,11 +272,26 @@ def migrate_payments(conn):
         ("trade_no", "ALTER TABLE orders ADD COLUMN trade_no TEXT"),
         ("payment_url", "ALTER TABLE orders ADD COLUMN payment_url TEXT"),
         ("notify_payload", "ALTER TABLE orders ADD COLUMN notify_payload TEXT"),
+        ("extras_payload", "ALTER TABLE orders ADD COLUMN extras_payload TEXT"),
         ("updated_at", "ALTER TABLE orders ADD COLUMN updated_at TEXT"),
     ]
     for col, sql in migrations:
         if col not in cols:
             conn.execute(sql)
+
+def migrate_referrals(conn):
+    conn.execute(
+        """INSERT OR IGNORE INTO referral_settings
+           (id, enabled, commission_rate, invite_merit, min_withdraw_amount)
+           VALUES (1, 1, 10.0, 5, 10.0)"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_referral_relations_inviter ON referral_relations(inviter_user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_referral_commissions_inviter ON referral_commissions(inviter_user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_referral_withdrawals_user ON referral_withdrawals(user_id)")
+
+def migrate_entitlements(conn):
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_entitlements_user_product ON entitlements(user_id, product_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_entitlements_session ON entitlements(session_id)")
 
 def seed_payment_config(conn):
     gateway_count = conn.execute("SELECT COUNT(*) AS c FROM payment_gateways").fetchone()['c']
@@ -1175,6 +1236,101 @@ def build_epay_payment_url(h, gateway, order_id, product_name, amount):
     params["sign_type"] = "MD5"
     return api_url + "/submit.php?" + urlencode(params)
 
+def get_referral_settings(conn=None):
+    own_conn = conn is None
+    conn = conn or get_db()
+    row = conn.execute("SELECT * FROM referral_settings WHERE id=1").fetchone()
+    if own_conn:
+        conn.close()
+    data = dict(row) if row else {}
+    return {
+        "enabled": bool(data.get("enabled", 1)),
+        "commission_rate": money_value(data.get("commission_rate", 10.0)),
+        "invite_merit": int(data.get("invite_merit", 5) or 0),
+        "min_withdraw_amount": money_value(data.get("min_withdraw_amount", 10.0)),
+        "updated_at": data.get("updated_at"),
+    }
+
+def add_merit_tx(conn, user_id, amount, reason, animation=None):
+    amount = int(amount or 0)
+    if amount <= 0:
+        return
+    conn.execute(
+        "UPDATE users SET merit=merit+?, total_merit_added=total_merit_added+? WHERE id=?",
+        (amount, amount, user_id),
+    )
+    conn.execute(
+        "INSERT INTO merits (id, user_id, amount, reason, animation) VALUES (?,?,?,?,?)",
+        (gen_id(), user_id, amount, reason, animation or random.choice(["golden_lotus", "buddha_light", "mandala"])),
+    )
+
+def settle_referral_commission(conn, order_id):
+    order = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+    if not order:
+        return None
+    order = dict(order)
+    existing = conn.execute("SELECT id FROM referral_commissions WHERE order_id=?", (order_id,)).fetchone()
+    if existing:
+        return None
+    settings = get_referral_settings(conn)
+    if not settings["enabled"] or settings["commission_rate"] <= 0:
+        return None
+    relation = conn.execute(
+        "SELECT * FROM referral_relations WHERE invitee_user_id=?",
+        (order.get("user_id"),),
+    ).fetchone()
+    if not relation:
+        return None
+    relation = dict(relation)
+    if relation["inviter_user_id"] == order.get("user_id"):
+        return None
+    base_amount = money_value(order.get("amount"))
+    amount = money_value(base_amount * settings["commission_rate"] / 100)
+    if amount <= 0:
+        return None
+    commission_id = gen_id()
+    conn.execute(
+        """INSERT INTO referral_commissions
+           (id, inviter_user_id, invitee_user_id, order_id, amount, rate, base_amount, status)
+           VALUES (?,?,?,?,?,?,?,'settled')""",
+        (
+            commission_id,
+            relation["inviter_user_id"],
+            order.get("user_id"),
+            order_id,
+            amount,
+            settings["commission_rate"],
+            base_amount,
+        ),
+    )
+    conn.execute(
+        "UPDATE referral_codes SET earnings=earnings+? WHERE user_id=?",
+        (amount, relation["inviter_user_id"]),
+    )
+    return {"id": commission_id, "amount": amount}
+
+def grant_order_entitlement(conn, order_id):
+    order = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+    if not order:
+        return None
+    order = dict(order)
+    product_id = order.get("product_id") or ""
+    if not product_id.startswith("unlock_") and not product_id.startswith("single_") and not product_id.startswith("extra_"):
+        return None
+    session_id = None
+    try:
+      payload = json.loads(order.get("extras_payload") or "{}")
+      session_id = payload.get("session_id")
+    except Exception:
+      session_id = None
+    conn.execute(
+        """INSERT OR IGNORE INTO entitlements
+           (id, user_id, product_id, session_id, order_id)
+           VALUES (?,?,?,?,?)""",
+        (gen_id(), order.get("user_id"), product_id, session_id, order_id),
+    )
+    return {"product_id": product_id, "session_id": session_id}
+
 def plain_resp(h, text, status=200, content_type="text/plain; charset=utf-8"):
     body = text.encode("utf-8")
     h.send_response(status)
@@ -1588,6 +1744,10 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             '/admin/ai-config/test':     self.route_admin_ai_config_test,
             '/admin/payment-config':     self.route_admin_payment_config,
             '/admin/payment-config/save': self.route_admin_payment_config_save,
+            '/admin/referral-config':    self.route_admin_referral_config,
+            '/admin/referral-config/save': self.route_admin_referral_config_save,
+            '/admin/referral-withdrawal/update': self.route_admin_referral_withdrawal_update,
+            '/admin/order/update':        self.route_admin_order_update,
         }
 
         handler = routes.get(api_path)
@@ -1599,6 +1759,14 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
     # ─── Auth Routes ───────────────────────────────────────────────────────
 
     def route_auth_anonymous_init(self, data):
+        try:
+            self._route_auth_anonymous_init(data)
+        except Exception as e:
+            print(f"  [ERROR] anonymous_init: {e}")
+            traceback.print_exc()
+            json_err(self, f"匿名初始化失败: {e}")
+
+    def _route_auth_anonymous_init(self, data):
         device_id = data.get('device_id', '')
         if not device_id:
             json_err(self, "缺少 device_id")
@@ -1700,6 +1868,14 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         json_resp(self, {"token": token, "user": user_payload(row)})
 
     def route_auth_login(self, data):
+        try:
+            self._route_auth_login(data)
+        except Exception as e:
+            print(f"  [ERROR] auth_login: {e}")
+            traceback.print_exc()
+            json_err(self, f"登录失败: {e}")
+
+    def _route_auth_login(self, data):
         account = (data.get('account') or data.get('username') or '').strip().lower()
         password = data.get('password') or ''
         device_id = data.get('device_id') or ''
@@ -1710,7 +1886,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         conn = get_db()
         row = conn.execute(
             "SELECT * FROM users WHERE lower(username)=? OR lower(lucky_code)=?",
-            (account, account, account)
+            (account, account)
         ).fetchone()
         if not row:
             conn.close()
@@ -1896,6 +2072,9 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             "orders": conn.execute("SELECT COUNT(*) AS c FROM orders").fetchone()['c'],
             "paid_orders": conn.execute("SELECT COUNT(*) AS c FROM orders WHERE status='paid'").fetchone()['c'],
             "merit_total": conn.execute("SELECT COALESCE(SUM(total_merit_added),0) AS s FROM users").fetchone()['s'],
+            "referral_users": conn.execute("SELECT COUNT(*) AS c FROM referral_relations").fetchone()['c'],
+            "referral_commissions": conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM referral_commissions WHERE status='settled'").fetchone()['s'],
+            "pending_withdrawals": conn.execute("SELECT COUNT(*) AS c FROM referral_withdrawals WHERE status='pending_review'").fetchone()['c'],
         }
         recent_users = [
             dict(row) for row in conn.execute(
@@ -2153,6 +2332,143 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         conn.commit()
         conn.close()
         self.route_admin_payment_config({})
+
+    def route_admin_referral_config(self, data):
+        admin = require_admin(self)
+        if not admin:
+            return
+        conn = get_db()
+        settings = get_referral_settings(conn)
+        summary = {
+            "relations": conn.execute("SELECT COUNT(*) AS c FROM referral_relations").fetchone()['c'],
+            "settled_amount": money_value(conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM referral_commissions WHERE status='settled'").fetchone()['s']),
+            "pending_withdraw_amount": money_value(conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM referral_withdrawals WHERE status='pending_review'").fetchone()['s']),
+        }
+        relations = [
+            dict(row) for row in conn.execute(
+                """SELECT rr.id,rr.invite_code,rr.created_at,
+                          inviter.nickname AS inviter_nickname, inviter.lucky_code AS inviter_lucky_code, inviter.username AS inviter_username,
+                          invitee.nickname AS invitee_nickname, invitee.lucky_code AS invitee_lucky_code, invitee.username AS invitee_username
+                   FROM referral_relations rr
+                   LEFT JOIN users inviter ON inviter.id=rr.inviter_user_id
+                   LEFT JOIN users invitee ON invitee.id=rr.invitee_user_id
+                   ORDER BY rr.created_at DESC LIMIT 50"""
+            ).fetchall()
+        ]
+        commissions = [
+            dict(row) for row in conn.execute(
+                """SELECT c.id,c.amount,c.rate,c.base_amount,c.status,c.created_at,
+                          o.product_name,o.product_id,o.id AS order_id,
+                          inviter.nickname AS inviter_nickname, inviter.lucky_code AS inviter_lucky_code, inviter.username AS inviter_username,
+                          invitee.nickname AS invitee_nickname, invitee.lucky_code AS invitee_lucky_code, invitee.username AS invitee_username
+                   FROM referral_commissions c
+                   LEFT JOIN orders o ON o.id=c.order_id
+                   LEFT JOIN users inviter ON inviter.id=c.inviter_user_id
+                   LEFT JOIN users invitee ON invitee.id=c.invitee_user_id
+                   ORDER BY c.created_at DESC LIMIT 50"""
+            ).fetchall()
+        ]
+        withdrawals = [
+            dict(row) for row in conn.execute(
+                """SELECT w.id,w.amount,w.note,w.status,w.created_at,w.updated_at,
+                          u.nickname,u.lucky_code,u.username
+                   FROM referral_withdrawals w
+                   LEFT JOIN users u ON u.id=w.user_id
+                   ORDER BY w.created_at DESC LIMIT 50"""
+            ).fetchall()
+        ]
+        conn.close()
+        json_resp(self, {
+            "settings": settings,
+            "summary": summary,
+            "relations": relations,
+            "commissions": commissions,
+            "withdrawals": withdrawals,
+        })
+
+    def route_admin_referral_config_save(self, data):
+        admin = require_admin(self)
+        if not admin:
+            return
+        enabled = 1 if data.get("enabled") else 0
+        commission_rate = max(0.0, min(money_value(data.get("commission_rate"), 10.0), 100.0))
+        invite_merit = max(0, min(int(data.get("invite_merit") or 0), 10000))
+        min_withdraw_amount = money_value(data.get("min_withdraw_amount"), 10.0)
+        conn = get_db()
+        conn.execute(
+            """INSERT INTO referral_settings
+               (id, enabled, commission_rate, invite_merit, min_withdraw_amount, updated_at)
+               VALUES (1,?,?,?,?,datetime('now','localtime'))
+               ON CONFLICT(id) DO UPDATE SET
+                 enabled=excluded.enabled,
+                 commission_rate=excluded.commission_rate,
+                 invite_merit=excluded.invite_merit,
+                 min_withdraw_amount=excluded.min_withdraw_amount,
+                 updated_at=datetime('now','localtime')""",
+            (enabled, commission_rate, invite_merit, min_withdraw_amount),
+        )
+        conn.commit()
+        conn.close()
+        self.route_admin_referral_config({})
+
+    def route_admin_referral_withdrawal_update(self, data):
+        admin = require_admin(self)
+        if not admin:
+            return
+        withdrawal_id = str(data.get("withdrawal_id") or "").strip()
+        status = str(data.get("status") or "").strip()
+        note = str(data.get("note") or "").strip()[:240]
+        if status not in ("pending_review", "approved", "rejected", "paid"):
+            json_err(self, "提现状态无效")
+            return
+        conn = get_db()
+        row = conn.execute("SELECT * FROM referral_withdrawals WHERE id=?", (withdrawal_id,)).fetchone()
+        if not row:
+            conn.close()
+            json_err(self, "提现记录不存在")
+            return
+        row = dict(row)
+        if status == "rejected" and row.get("status") != "rejected":
+            conn.execute("UPDATE referral_codes SET earnings=earnings+? WHERE user_id=?", (row["amount"], row["user_id"]))
+        conn.execute(
+            "UPDATE referral_withdrawals SET status=?, note=COALESCE(NULLIF(?,''), note), updated_at=datetime('now','localtime') WHERE id=?",
+            (status, note, withdrawal_id),
+        )
+        conn.commit()
+        conn.close()
+        self.route_admin_referral_config({})
+
+    def route_admin_order_update(self, data):
+        admin = require_admin(self)
+        if not admin:
+            return
+        order_id = str(data.get("order_id") or "").strip()
+        status = str(data.get("status") or "").strip()
+        trade_no = str(data.get("trade_no") or "").strip()
+        if status not in ("pending", "needs_review", "paid", "cancelled"):
+            json_err(self, "订单状态无效")
+            return
+        conn = get_db()
+        order = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+        if not order:
+            conn.close()
+            json_err(self, "订单不存在")
+            return
+        was_paid = str(order["status"] or "") == "paid"
+        conn.execute(
+            """UPDATE orders
+               SET status=?, trade_no=COALESCE(NULLIF(?,''), trade_no),
+                   paid_at=CASE WHEN ?='paid' THEN COALESCE(paid_at, datetime('now','localtime')) ELSE paid_at END,
+                   updated_at=datetime('now','localtime')
+               WHERE id=?""",
+            (status, trade_no, status, order_id),
+        )
+        if status == "paid" and not was_paid:
+            settle_referral_commission(conn, order_id)
+            grant_order_entitlement(conn, order_id)
+        conn.commit()
+        conn.close()
+        self.route_admin_orders({})
 
     # ─── Bazi Route ────────────────────────────────────────────────────────
 
@@ -2477,17 +2793,32 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         json_resp(self, {"items": build_almanac_week()})
 
     def route_entitlement_status(self, data):
+        user = get_auth_user(self)
+        product_id = str(data.get("product_id") or data.get("kind") or "").strip()
+        session_id = str(data.get("session_id") or "").strip()
+        unlocked = False
+        if user and product_id:
+            conn = get_db()
+            row = conn.execute(
+                """SELECT id FROM entitlements
+                   WHERE user_id=? AND product_id=? AND (COALESCE(session_id,'')='' OR session_id=?)
+                   LIMIT 1""",
+                (user["id"], product_id, session_id),
+            ).fetchone()
+            conn.close()
+            unlocked = bool(row)
         json_resp(self, {
-            "kind": data.get("kind", ""),
-            "needs_payment": False,
+            "kind": product_id,
+            "product_id": product_id,
+            "needs_payment": not unlocked,
             "free_used": 0,
-            "free_limit": 99,
-            "remaining": 99,
-            "unlocked": True,
+            "free_limit": 0,
+            "remaining": 0,
+            "unlocked": unlocked,
         })
 
     def route_entitlement_unlock_check(self, data):
-        json_resp(self, {"unlocked": True, "session_id": data.get("session_id", "")})
+        self.route_entitlement_status(data)
 
     def route_meditation_catalog(self, data):
         json_resp(self, meditation_catalog())
@@ -2736,9 +3067,9 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         conn = get_db()
         conn.execute(
             """INSERT INTO orders
-               (id, user_id, product_id, product_name, amount, status, provider, gateway_id, payment_url, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,datetime('now','localtime'))""",
-            (order_id, user['id'], product_id, product_name, amount, 'pending', 'epay', gateway['id'], payment_url)
+               (id, user_id, product_id, product_name, amount, status, provider, gateway_id, payment_url, extras_payload, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now','localtime'))""",
+            (order_id, user['id'], product_id, product_name, amount, 'pending', 'epay', gateway['id'], payment_url, json.dumps(extras, ensure_ascii=False))
         )
         conn.commit()
         conn.close()
@@ -2847,6 +3178,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         paid = trade_status in ("TRADE_SUCCESS", "SUCCESS", "PAID") or str(data.get("status") or "").lower() == "paid"
         paid_amount = money_value(data.get("money"), order.get("amount"))
         if paid and abs(paid_amount - money_value(order.get("amount"))) <= 0.01:
+            was_paid = str(order.get("status") or "") == "paid"
             conn.execute(
                 """UPDATE orders
                    SET status='paid', paid_at=COALESCE(paid_at, datetime('now','localtime')),
@@ -2854,6 +3186,9 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
                    WHERE id=?""",
                 (data.get("trade_no") or data.get("trade_no_third") or "", json.dumps(data, ensure_ascii=False), order_id)
             )
+            if not was_paid:
+                settle_referral_commission(conn, order_id)
+                grant_order_entitlement(conn, order_id)
             conn.commit()
             conn.close()
             plain_resp(self, "success")
@@ -2880,28 +3215,53 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         user = require_auth(self)
         if not user:
             return
-        invite_code = data.get('invite_code', '')
-        device_id = data.get('device_id', '')
+        invite_code = str(data.get('invite_code', '') or '').strip().upper()
+        device_id = str(data.get('device_id', '') or '').strip()
 
         if not invite_code:
-            json_err(self, "请填写邀请码")
+            json_err(self, "请填写传灯码")
             return
 
         conn = get_db()
         ref = conn.execute("SELECT * FROM referral_codes WHERE code=?", (invite_code,)).fetchone()
         if not ref:
             conn.close()
-            json_err(self, "邀请码无效")
+            json_err(self, "传灯码无效")
             return
 
         ref = dict(ref)
-        # Update referral stats
-        conn.execute("UPDATE referral_codes SET used_count=used_count+1, earnings=earnings+0.5 WHERE id=?", (ref['id'],))
-        conn.execute("UPDATE users SET merit=merit+5 WHERE id=?", (ref['user_id'],))
+        if ref['user_id'] == user['id']:
+            conn.close()
+            json_err(self, "不能使用自己的传灯码")
+            return
+        existing = conn.execute("SELECT * FROM referral_relations WHERE invitee_user_id=?", (user['id'],)).fetchone()
+        if existing:
+            conn.close()
+            json_err(self, "当前账号已结过这段善缘")
+            return
+
+        settings = get_referral_settings(conn)
+        if not settings["enabled"]:
+            conn.close()
+            json_err(self, "善缘传灯暂未开启")
+            return
+
+        conn.execute(
+            """INSERT INTO referral_relations
+               (id, inviter_user_id, invitee_user_id, invite_code, device_id)
+               VALUES (?,?,?,?,?)""",
+            (gen_id(), ref['user_id'], user['id'], invite_code, device_id),
+        )
+        conn.execute("UPDATE referral_codes SET used_count=used_count+1 WHERE id=?", (ref['id'],))
+        add_merit_tx(conn, ref['user_id'], settings["invite_merit"], "善缘传灯功德")
+        add_merit_tx(conn, user['id'], settings["invite_merit"], "填写传灯码功德")
         conn.commit()
         conn.close()
 
-        json_resp(self, {"message": "邀请码已生效，双方各获得5功德"})
+        json_resp(self, {
+            "message": f"传灯码已生效，双方各获得{settings['invite_merit']}功德",
+            "commission_rate": settings["commission_rate"],
+        })
 
     def route_referral_me(self, data):
         user = require_auth(self)
@@ -2922,31 +3282,81 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             json_resp(self, {"code": ref_code, "used_count": 0, "earnings": 0})
         else:
             r = dict(ref)
-            json_resp(self, {"code": r['code'], "used_count": r['used_count'], "earnings": r['earnings']})
+            conn3 = get_db()
+            settings = get_referral_settings(conn3)
+            relation = conn3.execute(
+                """SELECT rr.*, u.nickname, u.lucky_code, u.username
+                   FROM referral_relations rr LEFT JOIN users u ON u.id=rr.inviter_user_id
+                   WHERE rr.invitee_user_id=?""",
+                (user['id'],),
+            ).fetchone()
+            recent = [
+                dict(row) for row in conn3.execute(
+                    """SELECT c.id,c.amount,c.rate,c.base_amount,c.status,c.created_at,
+                              o.product_name,o.product_id,u.nickname,u.lucky_code,u.username
+                       FROM referral_commissions c
+                       LEFT JOIN orders o ON o.id=c.order_id
+                       LEFT JOIN users u ON u.id=c.invitee_user_id
+                       WHERE c.inviter_user_id=?
+                       ORDER BY c.created_at DESC LIMIT 20""",
+                    (user['id'],),
+                ).fetchall()
+            ]
+            withdrawals = [
+                dict(row) for row in conn3.execute(
+                    "SELECT id,amount,note,status,created_at,updated_at FROM referral_withdrawals WHERE user_id=? ORDER BY created_at DESC LIMIT 20",
+                    (user['id'],),
+                ).fetchall()
+            ]
+            conn3.close()
+            json_resp(self, {
+                "code": r['code'],
+                "used_count": r['used_count'],
+                "earnings": money_value(r['earnings']),
+                "settings": settings,
+                "inviter": dict(relation) if relation else None,
+                "commissions": recent,
+                "withdrawals": withdrawals,
+            })
 
     def route_referral_withdraw(self, data):
         user = require_auth(self)
         if not user:
             return
-        amount = data.get('amount', 0)
-        note = data.get('note', '')
+        amount = money_value(data.get('amount', 0))
+        note = str(data.get('note', '') or '').strip()[:240]
 
         if amount <= 0:
             json_err(self, "金额须大于0")
             return
 
         conn = get_db()
+        settings = get_referral_settings(conn)
+        if amount < settings["min_withdraw_amount"]:
+            conn.close()
+            json_err(self, f"最低回向金额为 {money_text(settings['min_withdraw_amount'])}")
+            return
         ref = conn.execute("SELECT * FROM referral_codes WHERE user_id=?", (user['id'],)).fetchone()
         if not ref or ref['earnings'] < amount:
             conn.close()
-            json_err(self, "余额不足")
+            json_err(self, "可回向福缘不足")
             return
 
         conn.execute("UPDATE referral_codes SET earnings=earnings-? WHERE user_id=?", (amount, user['id']))
+        withdrawal_id = gen_id()
+        conn.execute(
+            "INSERT INTO referral_withdrawals (id, user_id, amount, note, status) VALUES (?,?,?,?,?)",
+            (withdrawal_id, user['id'], amount, note, "pending_review"),
+        )
         conn.commit()
         conn.close()
 
-        json_resp(self, {"withdrawn": amount, "remaining": ref['earnings'] - amount, "status": "pending_review"})
+        json_resp(self, {
+            "withdrawal_id": withdrawal_id,
+            "withdrawn": amount,
+            "remaining": money_value(ref['earnings'] - amount),
+            "status": "pending_review",
+        })
 
     # ─── History Routes ────────────────────────────────────────────────────
 
