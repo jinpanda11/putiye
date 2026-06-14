@@ -14,6 +14,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get('PUTIYUAN_DB_PATH') or os.path.join(BASE_DIR, 'data.db')
 SECRET_KEY = os.environ.get('PUTIYUAN_SECRET_KEY') or 'putiyuan-local-dev-k3y!@#'
 TOKEN_EXPIRE_DAYS = 365
+UTC = getattr(datetime, 'UTC', datetime.timezone.utc)
 
 # ─── Email (SMTP) Config ─────────────────────────────────────────────────────
 SMTP_HOST = os.environ.get('PUTIYUAN_SMTP_HOST') or ''
@@ -324,7 +325,7 @@ def seed_payment_config(conn):
 # ─── Auth Helpers ────────────────────────────────────────────────────────────
 
 def make_token(user_id):
-    exp = (datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=TOKEN_EXPIRE_DAYS)).isoformat() + 'Z'
+    exp = (datetime.datetime.now(UTC) + datetime.timedelta(days=TOKEN_EXPIRE_DAYS)).isoformat() + 'Z'
     payload = json.dumps({"uid": user_id, "exp": exp}, separators=(',',':'))
     sig = hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
     token = base64.urlsafe_b64encode((payload + '.' + sig).encode()).decode()
@@ -339,7 +340,7 @@ def verify_token(token):
             return None
         data = json.loads(payload)
         exp = datetime.datetime.fromisoformat(data['exp'].rstrip('Z'))
-        if exp < datetime.datetime.now(datetime.UTC):
+        if exp < datetime.datetime.now(UTC):
             return None
         return data['uid']
     except Exception:
@@ -1818,7 +1819,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             # Refresh token
             token = make_token(user['id'])
             conn.execute("UPDATE users SET token=?, token_created_at=? WHERE id=?",
-                        (token, datetime.datetime.now(datetime.UTC).isoformat(), user['id']))
+                        (token, datetime.datetime.now(UTC).isoformat(), user['id']))
             conn.commit()
             conn.close()
             json_resp(self, {
@@ -1833,7 +1834,7 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
         token = make_token(uid)
         conn.execute(
             "INSERT INTO users (id, lucky_code, device_id, nickname, token, token_created_at) VALUES (?,?,?,?,?,?)",
-            (uid, lucky_code, device_id, lucky_code, token, datetime.datetime.now(datetime.UTC).isoformat())
+            (uid, lucky_code, device_id, lucky_code, token, datetime.datetime.now(UTC).isoformat())
         )
         # Create referral code for user
         ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
