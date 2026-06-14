@@ -161,6 +161,11 @@ export const auth = {
   },
 };
 
+export const setup = {
+  status: () => request('GET', '/setup/status', undefined, false),
+  createAdmin: (data) => request('POST', '/setup/admin', { ...data, device_id: getDeviceId() }, false).then(persistAuth),
+};
+
 export const bazi = {
   calculate: (data) => request('POST', '/bazi/calculate', data),
   analyzeSSE: (data, cb) => readSSE('/bazi/analyze', data, cb),

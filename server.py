@@ -1720,6 +1720,8 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             '/auth/send-verify-code':    self.route_auth_send_verify_code,
             '/auth/bind-email':          self.route_auth_bind_email,
             '/auth/me':                  self.route_auth_me,
+            '/setup/status':             self.route_setup_status,
+            '/setup/admin':              self.route_setup_admin,
             '/auth/history/push':        self.route_history_push,
             '/auth/history/list':        self.route_history_list,
             '/auth/history/clear':       self.route_history_clear,
@@ -1873,7 +1875,6 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             return
 
         current = get_auth_user(self)
-        first_registered = conn.execute("SELECT COUNT(*) AS c FROM users WHERE password_hash IS NOT NULL AND password_hash<>''").fetchone()['c'] == 0
         password_hash = hash_password(password)
         now = datetime.datetime.utcnow().isoformat()
 
@@ -1881,14 +1882,14 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             uid = current['id']
             conn.execute(
                 "UPDATE users SET username=?, nickname=?, password_hash=?, is_admin=?, registered_at=?, last_login_at=? WHERE id=?",
-                (username, nickname or username, password_hash, 1 if first_registered else 0, now, now, uid)
+                (username, nickname or username, password_hash, 0, now, now, uid)
             )
         else:
             uid = gen_id()
             lucky_code = gen_lucky_code()
             conn.execute(
                 "INSERT INTO users (id, lucky_code, username, device_id, nickname, password_hash, is_admin, registered_at, last_login_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                (uid, lucky_code, username, device_id, nickname or username, password_hash, 1 if first_registered else 0, now, now)
+                (uid, lucky_code, username, device_id, nickname or username, password_hash, 0, now, now)
             )
             ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
             conn.execute("INSERT INTO referral_codes (id, user_id, code) VALUES (?,?,?)", (gen_id(), uid, ref_code))
@@ -1899,6 +1900,57 @@ class PutiyuanHandler(BaseHTTPRequestHandler):
             if not email_owner:
                 conn.execute("UPDATE users SET email=?, email_verified=0 WHERE id=?", (email, uid))
 
+        token = make_token(uid)
+        conn.execute("UPDATE users SET token=?, token_created_at=? WHERE id=?", (token, now, uid))
+        row = dict(conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone())
+        conn.commit()
+        conn.close()
+        json_resp(self, {"token": token, "user": user_payload(row)})
+
+    def route_setup_status(self, data):
+        conn = get_db()
+        admin_count = conn.execute("SELECT COUNT(*) AS c FROM users WHERE is_admin=1").fetchone()['c']
+        conn.close()
+        json_resp(self, {"needs_admin_setup": admin_count == 0})
+
+    def route_setup_admin(self, data):
+        username = (data.get('username') or '').strip().lower()
+        password = data.get('password') or ''
+        nickname = (data.get('nickname') or '').strip()
+        email = (data.get('email') or '').strip()
+        device_id = data.get('device_id') or ''
+
+        if not re.fullmatch(r'[a-zA-Z0-9_]{3,24}', username):
+            json_err(self, "管理员账号需为 3-24 位字母、数字或下划线")
+            return
+        if len(password) < 8:
+            json_err(self, "管理员密码至少 8 位")
+            return
+
+        conn = get_db()
+        admin_count = conn.execute("SELECT COUNT(*) AS c FROM users WHERE is_admin=1").fetchone()['c']
+        if admin_count > 0:
+            conn.close()
+            json_err(self, "管理员已设置，请直接登录")
+            return
+        existing = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+        if existing:
+            conn.close()
+            json_err(self, "该账号已被注册")
+            return
+
+        uid = gen_id()
+        lucky_code = gen_lucky_code()
+        password_hash = hash_password(password)
+        now = datetime.datetime.utcnow().isoformat()
+        conn.execute(
+            "INSERT INTO users (id, lucky_code, username, device_id, nickname, password_hash, is_admin, registered_at, last_login_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (uid, lucky_code, username, device_id, nickname or username, password_hash, 1, now, now)
+        )
+        if email:
+            conn.execute("UPDATE users SET email=?, email_verified=0 WHERE id=?", (email, uid))
+        ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        conn.execute("INSERT INTO referral_codes (id, user_id, code) VALUES (?,?,?)", (gen_id(), uid, ref_code))
         token = make_token(uid)
         conn.execute("UPDATE users SET token=?, token_created_at=? WHERE id=?", (token, now, uid))
         row = dict(conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone())

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { auth, getSavedUser, saveUser, getToken, clearToken, clearDeviceId } from '../api/client';
+import { auth, setup, getSavedUser, saveUser, getToken, clearToken, clearDeviceId } from '../api/client';
 
 const AuthContext = createContext(null);
 
@@ -12,10 +12,14 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('login');
+  const [setupRequired, setSetupRequired] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setup.status()
+        .then(data => { if (!cancelled) setSetupRequired(Boolean(data?.needs_admin_setup)); })
+        .catch(() => {});
       const saved = getSavedUser();
       const token = getToken();
       if (saved && !token) setUser(null);
@@ -87,6 +91,11 @@ export function AuthProvider({ children }) {
   const closeModal = useCallback(() => setModalOpen(false), []);
   const switchMode = useCallback((m) => setModalMode(m), []);
   const isAuthenticated = Boolean(user?.is_registered || user?.username || user?.email || user?.is_admin);
+  const completeSetup = useCallback((u) => {
+    setUser(u);
+    saveUser(u);
+    setSetupRequired(false);
+  }, []);
 
   const logout = useCallback(async () => {
     setLoading(true);
@@ -110,6 +119,6 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const value = { user, loading, modalOpen, modalMode, isAuthenticated, setModalOpen, setUser, openLogin, closeModal, switchMode, logout };
+  const value = { user, loading, modalOpen, modalMode, setupRequired, isAuthenticated, setModalOpen, setUser, openLogin, closeModal, switchMode, completeSetup, logout };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

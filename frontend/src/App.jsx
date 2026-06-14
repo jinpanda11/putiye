@@ -6,6 +6,7 @@ import { BottomBar } from './components/layout/BottomBar';
 import { PageTransition } from './components/layout/PageTransition';
 import { ShareFAB } from './components/layout/ShareFAB';
 import { AuthModal } from './components/auth/AuthModal';
+import { AdminSetupModal } from './components/auth/AdminSetupModal';
 import { Home } from './pages/Home';
 import { Loading } from './components/ui/Loading';
 import { lazy, Suspense } from 'react';
@@ -56,6 +57,7 @@ export default function App() {
       <ShareFAB />
       <BottomBar />
       <AuthModal />
+      <AdminSetupModal />
     </AuthProvider>
   );
 }
