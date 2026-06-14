@@ -22,7 +22,7 @@ jobs:
           python-version: "3.12"
 
       - name: Compile server
-        run: python -m py_compile server.py mirror-server.py
+        run: python -m py_compile server.py
 
       - name: Verify deploy scripts
         run: bash -n scripts/deploy/*.sh
